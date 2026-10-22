@@ -47,24 +47,23 @@ final class QuickAccessOverlay {
         panel.contentView = NSView.hosting(view)
     }
 
+    /// Captures exclude this window instead of hiding it, so the stack
+    /// never blinks.
+    var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
+
+    /// The newest card goes on top. The panel grows upward from a fixed
+    /// bottom edge, so the cards already showing don't move.
     func show(_ result: CaptureResult) {
         layout(count: model.results.count + 1)
-        if !panel.isVisible { panel.fadeIn(duration: 0.2) }
-        withAnimation(.spring(duration: 0.4, bounce: 0.25)) { model.results.append(result) }
-    }
-
-    /// Hides the stack while a capture is taken, so it doesn't end up in it.
-    func setHidden(_ hidden: Bool) {
-        if hidden {
-            panel.orderOut(nil)
-        } else if !model.results.isEmpty {
-            panel.orderFrontRegardless()
-        }
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        withAnimation(.easeOut(duration: 0.3)) { model.results.insert(result, at: 0) }
     }
 
     /// The panel is sized for the stack; cards animate inside it.
     private func layout(count: Int) {
-        guard let screen = NSScreen.underMouse else { return }
+        // Stay on the same display while cards are showing.
+        let current = panel.isVisible ? panel.screen : nil
+        guard let screen = current ?? NSScreen.underMouse else { return }
         let rowHeight: CGFloat = 170
         let height = min(CGFloat(count) * rowHeight + 20, screen.visibleFrame.height)
         panel.setFrame(
@@ -147,7 +146,7 @@ private struct QuickAccessView: View {
             ForEach(model.results) { result in
                 QuickAccessCard(result: result) { perform($0, result) }
                     .transition(.asymmetric(
-                        insertion: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.9)),
+                        insertion: .opacity,
                         removal: .move(edge: .leading).combined(with: .opacity)
                     ))
             }

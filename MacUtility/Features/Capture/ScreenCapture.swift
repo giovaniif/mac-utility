@@ -87,13 +87,10 @@ final class ScreenCapture {
     // MARK: Screenshots
 
     private func screenshot(_ target: CaptureTarget) async throws {
-        previews.setHidden(true)
-        var shown = false
-        defer { if !shown { previews.setHidden(false) } }
         // Give the selection overlay a frame to leave the screen.
         try await Task.sleep(for: .milliseconds(80))
 
-        let content = try await CaptureContent.make(for: target)
+        let content = try await CaptureContent.make(for: target, excluding: [previews.windowID])
         let config = SCStreamConfiguration()
         config.width = content.pixelWidth
         config.height = content.pixelHeight
@@ -111,7 +108,6 @@ final class ScreenCapture {
         try png.write(to: url, options: .atomic)
         NSSound(named: "Grab")?.play()
         log.info("screenshot saved: \(url.lastPathComponent)")
-        shown = true
         previews.show(CaptureResult(kind: .screenshot, url: url, thumbnail: NSImage(cgImage: image, size: rep.size)))
     }
 
@@ -141,7 +137,7 @@ final class ScreenCapture {
         try await Task.sleep(for: .milliseconds(100))
 
         do {
-            let content = try await CaptureContent.make(for: target, excluding: [control.windowID])
+            let content = try await CaptureContent.make(for: target, excluding: [control.windowID, previews.windowID])
             let url = CaptureFiles.newURL(prefix: "Recording", ext: "mp4")
             let recording = try ScreenRecording(content: content, microphone: micAllowed, url: url)
             try await recording.start()
