@@ -4,6 +4,10 @@ A small macOS menu bar app that bundles a few everyday tools: keyboard cleaning 
 
 Native Swift (SwiftUI + AppKit), macOS 14 or later. Every feature can be switched off on its own.
 
+## Download
+
+Grab the DMG from the [latest release](https://github.com/giovaniif/mac-utility/releases/latest) and drag Mac Utility into Applications. The build isn't notarized yet, so on first launch right-click the app and choose Open.
+
 ## Features
 
 ### Keyboard cleaning mode — `⌃⌥⌘K`
