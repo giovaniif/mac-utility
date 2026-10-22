@@ -4,7 +4,7 @@ import KeyboardShortcuts
 /// A user-toggleable feature. Disabling one hides its menu items and
 /// unregisters its global hotkeys.
 enum Feature: String, CaseIterable, Identifiable {
-    case keyboardCleaning, clipboardHistory, windowManager
+    case keyboardCleaning, clipboardHistory, windowManager, screenCapture
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum Feature: String, CaseIterable, Identifiable {
         case .keyboardCleaning: "Keyboard cleaning mode"
         case .clipboardHistory: "Clipboard history"
         case .windowManager: "Window manager"
+        case .screenCapture: "Screen capture"
         }
     }
 
@@ -24,6 +25,7 @@ enum Feature: String, CaseIterable, Identifiable {
         case .keyboardCleaning: [.keyboardCleaning]
         case .clipboardHistory: [.clipboardHistory]
         case .windowManager: [.windowNextDisplay, .windowPreviousDisplay]
+        case .screenCapture: [.captureArea, .captureScreen, .recordScreen]
         }
     }
 

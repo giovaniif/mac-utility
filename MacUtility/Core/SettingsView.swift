@@ -30,6 +30,12 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Clipboard history", name: .clipboardHistory)
                 KeyboardShortcuts.Recorder("Move window to next display", name: .windowNextDisplay)
                 KeyboardShortcuts.Recorder("Move window to previous display", name: .windowPreviousDisplay)
+                KeyboardShortcuts.Recorder("Capture area or window", name: .captureArea)
+                KeyboardShortcuts.Recorder("Capture full screen", name: .captureScreen)
+                KeyboardShortcuts.Recorder("Record screen", name: .recordScreen)
+            }
+            Section("Recording") {
+                RecordingOptionToggles()
             }
             Section("Permissions") {
                 PermissionRows(permissions: permissions)
@@ -73,6 +79,12 @@ struct PermissionRows: View {
             granted: permissions.inputMonitoring,
             grant: permissions.requestInputMonitoring
         )
+        PermissionRow(
+            title: "Screen Recording",
+            detail: "Take screenshots and record the screen.",
+            granted: permissions.screenRecording,
+            grant: permissions.requestScreenRecording
+        )
     }
 }
 
@@ -95,5 +107,18 @@ private struct PermissionRow: View {
                 Button("Grant…", action: grant)
             }
         }
+    }
+}
+
+/// Extras layered on top of a screen recording. Shared by Settings and the tray.
+struct RecordingOptionToggles: View {
+    @AppStorage(RecordingOptions.cameraKey) private var camera = false
+    @AppStorage(RecordingOptions.microphoneKey) private var microphone = false
+    @AppStorage(RecordingOptions.keystrokesKey) private var keystrokes = false
+
+    var body: some View {
+        Toggle(isOn: $camera) { Text("Camera").frame(maxWidth: .infinity, alignment: .leading) }
+        Toggle(isOn: $microphone) { Text("Microphone").frame(maxWidth: .infinity, alignment: .leading) }
+        Toggle(isOn: $keystrokes) { Text("Show keystrokes").frame(maxWidth: .infinity, alignment: .leading) }
     }
 }

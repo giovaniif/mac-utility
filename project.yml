@@ -23,7 +23,14 @@ targets:
       properties:
         CFBundleDisplayName: Mac Utility
         LSUIElement: true
+        NSCameraUsageDescription: Shows your camera in a bubble while you record the screen.
+        NSMicrophoneUsageDescription: Records your voice along with screen recordings.
         NSHumanReadableCopyright: ""
+    entitlements:
+      path: MacUtility/MacUtility.entitlements
+      properties:
+        com.apple.security.device.camera: true
+        com.apple.security.device.audio-input: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtility

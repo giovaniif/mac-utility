@@ -22,7 +22,11 @@
 	<string>1</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Shows your camera in a bubble while you record the screen.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Records your voice along with screen recordings.</string>
 </dict>
 </plist>

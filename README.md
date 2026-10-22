@@ -1,6 +1,6 @@
 # Mac Utility
 
-A small macOS menu bar app that bundles a few everyday tools: keyboard cleaning mode, clipboard history and moving windows between displays.
+A small macOS menu bar app that bundles a few everyday tools: keyboard cleaning mode, clipboard history, CleanShot-style screenshots and screen recording, and moving windows between displays.
 
 Native Swift (SwiftUI + AppKit), macOS 14 or later. Every feature can be switched off on its own.
 
@@ -28,13 +28,24 @@ Remembers what you copy and lets you paste it again.
 - Keeps the last 1,000 items or 30 days, whichever comes first. Pinned items never expire.
 - Stored locally in SQLite (via [GRDB](https://github.com/groue/GRDB.swift)) with full-text search, in `~/Library/Application Support/MacUtility/`. Nothing leaves your Mac.
 
+### Screen capture — `⌥⇧⌘4` / `⌥⇧⌘3` / `⌥⇧⌘5`
+
+Screenshots and screen recordings in the style of CleanShot.
+
+- `⌥⇧⌘4` shows a crosshair. Drag to capture an area, with a live size label, or press `Space` and click a window. `Esc` cancels.
+- `⌥⇧⌘3` captures the whole screen under the pointer.
+- `⌥⇧⌘5` records the screen. Drag an area, or click or press `Return` for the full screen. A small floating bar shows the elapsed time and a Stop button, and stays out of the video. Press `⌥⇧⌘5` again to stop.
+- While recording you can add a round camera bubble you can drag around, your microphone, and a pill that shows the keys you press. Each one has a switch in the menu bar panel and in Settings.
+- After each capture a thumbnail stacks in the bottom-left corner. Drag it into any app, or hover for Copy, Show in Finder, Open and Trash. It goes away by itself after a few seconds.
+- Screenshots are saved as PNG (sharp on Retina displays) and recordings as H.264 MP4, on the Desktop.
+
 ### Window manager — `⌃⌘→` / `⌃⌘←`
 
 Moves the focused window to the next or previous display, keeping its relative position and size.
 
 ## Menu bar and Settings
 
-The menu bar panel holds on/off switches: one to start keyboard cleaning, and one each to turn clipboard history and the window manager on or off.
+The menu bar panel holds on/off switches: one to start keyboard cleaning, one each to turn clipboard history, the window manager and screen capture on or off, and the camera, microphone and keystroke options for recordings.
 
 Settings has the feature switches, launch at login, every shortcut (all of them can be changed) and the permission status.
 
@@ -43,7 +54,9 @@ Settings has the feature switches, launch at login, every shortcut (all of them 
 | Permission | Used for |
 | --- | --- |
 | Accessibility | Moving windows and pasting from clipboard history |
-| Input Monitoring | Blocking the keyboard in cleaning mode |
+| Input Monitoring | Blocking the keyboard in cleaning mode, showing keystrokes in recordings |
+| Screen Recording | Screenshots and screen recordings |
+| Camera, Microphone | The camera bubble and voice in recordings, only if you turn them on |
 
 The app asks for each one when a feature first needs it. Settings shows what's granted.
 
@@ -75,6 +88,7 @@ defaults write com.giovani.MacUtility keyboardCleaningTimeout 30        # second
 defaults write com.giovani.MacUtility clipboardMaxItems 500             # history size
 defaults write com.giovani.MacUtility clipboardMaxDays 7                # history age
 defaults write com.giovani.MacUtility clipboardExcludedApps -array com.1password.1password
+defaults write com.giovani.MacUtility captureFolder ~/Pictures/Captures # where captures are saved
 ```
 
 ## Project layout
@@ -86,6 +100,7 @@ MacUtility/
   Features/
     KeyboardClean/   event tap and cleaning overlay
     Clipboard/       watcher, SQLite store and picker panel
+    Capture/         area/window picker, screenshots, recorder, previews
     Windows/         window mover
 DESIGN.md     design notes for each feature
 ```

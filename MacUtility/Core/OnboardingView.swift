@@ -8,7 +8,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Mac Utility lives in your menu bar.")
                 .font(.title2.bold())
-            Text("It needs two permissions to work. Grant them in System Settings, then come back here.")
+            Text("It needs a few permissions to work. Grant them in System Settings, then come back here.")
                 .foregroundStyle(.secondary)
             Form {
                 PermissionRows(permissions: permissions)

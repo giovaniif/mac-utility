@@ -12,11 +12,13 @@ final class FeatureActions {
     private let windowMover: WindowMover
     let keyboardCleaner: KeyboardCleaner
     private let clipboardHistory: ClipboardHistory
+    let screenCapture: ScreenCapture
 
     init(permissions: Permissions) {
         windowMover = WindowMover(permissions: permissions)
         keyboardCleaner = KeyboardCleaner(permissions: permissions)
         clipboardHistory = ClipboardHistory(permissions: permissions)
+        screenCapture = ScreenCapture(permissions: permissions)
     }
 
     func toggleKeyboardCleaning() {
@@ -32,5 +34,20 @@ final class FeatureActions {
     func moveWindow(_ direction: DisplayDirection) {
         guard Feature.windowManager.isEnabled else { return }
         windowMover.move(direction)
+    }
+
+    func captureArea() {
+        guard Feature.screenCapture.isEnabled else { return }
+        screenCapture.captureArea()
+    }
+
+    func captureScreen() {
+        guard Feature.screenCapture.isEnabled else { return }
+        screenCapture.captureScreen()
+    }
+
+    func toggleRecording() {
+        guard Feature.screenCapture.isEnabled else { return }
+        screenCapture.toggleRecording()
     }
 }

@@ -20,6 +20,7 @@ struct MacUtilityApp: App {
 struct MenuBarContent: View {
     let actions: FeatureActions
     @AppStorage(Feature.keyboardCleaning.defaultsKey) private var keyboardCleaning = true
+    @AppStorage(Feature.screenCapture.defaultsKey) private var screenCapture = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -33,6 +34,20 @@ struct MenuBarContent: View {
             }
             FeatureToggle(feature: .clipboardHistory)
             FeatureToggle(feature: .windowManager)
+            FeatureToggle(feature: .screenCapture)
+            if screenCapture {
+                if actions.screenCapture.isRecording {
+                    Toggle(isOn: Binding(
+                        get: { true },
+                        set: { _ in actions.toggleRecording() }
+                    )) {
+                        Text("Recording").frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                RecordingOptionToggles()
+                    .padding(.leading, 12)
+                    .font(.callout)
+            }
             Divider()
             HStack {
                 SettingsLink { Text("Settings…") }

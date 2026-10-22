@@ -9,6 +9,7 @@ import Observation
 final class Permissions {
     private(set) var accessibility = AXIsProcessTrusted()
     private(set) var inputMonitoring = CGPreflightListenEventAccess()
+    private(set) var screenRecording = CGPreflightScreenCaptureAccess()
 
     var allGranted: Bool { accessibility && inputMonitoring }
 
@@ -29,6 +30,7 @@ final class Permissions {
     func refresh() {
         accessibility = AXIsProcessTrusted()
         inputMonitoring = CGPreflightListenEventAccess()
+        screenRecording = CGPreflightScreenCaptureAccess()
     }
 
     func requestAccessibility() {
@@ -41,6 +43,12 @@ final class Permissions {
     func requestInputMonitoring() {
         if !CGRequestListenEventAccess() {
             open("Privacy_ListenEvent")
+        }
+    }
+
+    func requestScreenRecording() {
+        if !CGRequestScreenCaptureAccess() {
+            open("Privacy_ScreenCapture")
         }
     }
 
