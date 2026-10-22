@@ -25,10 +25,16 @@ struct CaptureContent {
     var pixelHeight: Int { Int((pointSize.height * scale).rounded()) }
 
     @MainActor
-    static func make(for target: CaptureTarget, excluding excludedIDs: [CGWindowID] = []) async throws -> CaptureContent {
+    /// `windowAsRegion` captures a window's frame on its display instead of
+    /// the window alone, so floating extras like the camera bubble show up.
+    static func make(
+        for target: CaptureTarget,
+        excluding excludedIDs: [CGWindowID] = [],
+        windowAsRegion: Bool = false
+    ) async throws -> CaptureContent {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
-        if case let .window(id, rect) = target {
+        if !windowAsRegion, case let .window(id, rect) = target {
             guard let window = content.windows.first(where: { $0.windowID == id }) else { throw CaptureError.noWindow }
             let scale = target.screen?.backingScaleFactor ?? 2
             return CaptureContent(
@@ -47,10 +53,10 @@ struct CaptureContent {
 
         let frame = screen.frame
         let rect = target.rect.intersection(frame)
-        let sourceRect: CGRect? = if case .area = target {
-            CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
-        } else {
+        let sourceRect: CGRect? = if case .display = target {
             nil
+        } else {
+            CGRect(x: rect.minX - frame.minX, y: frame.maxY - rect.maxY, width: rect.width, height: rect.height)
         }
         return CaptureContent(filter: filter, sourceRect: sourceRect, pointSize: rect.size, scale: screen.backingScaleFactor)
     }

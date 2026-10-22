@@ -138,7 +138,7 @@ final class ScreenCapture {
         try await Task.sleep(for: .milliseconds(100))
 
         do {
-            let content = try await CaptureContent.make(for: target, excluding: [control.windowID, previews.windowID])
+            let content = try await CaptureContent.make(for: target, excluding: [control.windowID, previews.windowID], windowAsRegion: true)
             let url = CaptureFiles.newURL(prefix: "Recording", ext: "mp4")
             let recording = try ScreenRecording(content: content, microphone: micAllowed, url: url)
             try await recording.start()

@@ -36,9 +36,9 @@ extension NSScreen {
     }
 }
 
-/// Crosshair overlay on every display. Drag to pick an area; for screenshots
-/// Space switches to picking a window, for recordings Return takes the whole
-/// display. Esc cancels.
+/// Crosshair overlay on every display. Drag to pick an area, Space switches
+/// to picking a window, Return takes the whole display (a click does too when
+/// recording). Esc cancels.
 @MainActor
 final class CaptureSelector {
     enum Mode { case screenshot, recording }
@@ -210,7 +210,7 @@ private final class SelectionView: NSView {
         switch event.keyCode {
         case 53: // Esc
             onFinish(nil)
-        case 49 where state.mode == .screenshot: // Space
+        case 49: // Space
             state.pickingWindow.toggle()
             state.hoveredWindow = state.pickingWindow ? state.windowAt(NSEvent.mouseLocation) : nil
             state.redraw()
@@ -269,7 +269,7 @@ private final class SelectionView: NSView {
         guard targetScreen == NSScreen.underMouse else { return }
         let hint: String = switch state.mode {
         case .screenshot: "Drag to capture an area · Space for a window · Esc to cancel"
-        case .recording: "Drag to record an area · Click or Return for the full screen · Esc to cancel"
+        case .recording: "Drag to record an area · Space for a window · Click or Return for the full screen · Esc to cancel"
         }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 14, weight: .medium),
