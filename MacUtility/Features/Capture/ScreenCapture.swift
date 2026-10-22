@@ -115,6 +115,7 @@ final class ScreenCapture {
 
     private func startRecording(_ target: CaptureTarget) async throws {
         recordArea = target.rect
+        previews.setHidden(true)
         let control = RecordingControl { [weak self] action in self?.handle(action) }
         control.show(on: target.screen ?? NSScreen.underMouse ?? NSScreen.screens[0])
         self.control = control
@@ -226,5 +227,6 @@ final class ScreenCapture {
         control = nil
         camera = nil
         keystrokes = nil
+        previews.setHidden(false)
     }
 }

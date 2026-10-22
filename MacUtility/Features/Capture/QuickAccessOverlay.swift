@@ -51,6 +51,15 @@ final class QuickAccessOverlay {
     /// never blinks.
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
 
+    /// Keeps the stack off screen while recording, then brings it back.
+    func setHidden(_ hidden: Bool) {
+        if hidden {
+            panel.fadeOut()
+        } else if !model.results.isEmpty {
+            panel.fadeIn(duration: 0.2)
+        }
+    }
+
     /// The newest card goes on top. The panel grows upward from a fixed
     /// bottom edge, so the cards already showing don't move.
     func show(_ result: CaptureResult) {
