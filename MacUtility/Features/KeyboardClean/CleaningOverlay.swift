@@ -31,8 +31,8 @@ final class CleaningOverlay {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(
-                rootView: CleaningOverlayView(countdown: countdown, onUnlock: onUnlock)
+            window.contentView = NSView.hosting(
+                CleaningOverlayView(countdown: countdown, onUnlock: onUnlock)
             )
             window.setFrame(screen.frame, display: true)
             window.fadeIn(duration: 0.25)

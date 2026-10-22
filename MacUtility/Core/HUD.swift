@@ -23,7 +23,8 @@ enum HUD {
         panel.level = .statusBar
         panel.ignoresMouseEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = hosting
+        hosting.frame.size = size
+        panel.contentView = NSView.container(for: hosting)
         if let screen = NSScreen.main?.visibleFrame {
             panel.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2, width: size.width, height: size.height), display: true)
         }

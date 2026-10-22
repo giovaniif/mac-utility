@@ -69,7 +69,7 @@ final class ClipboardPanel: NSObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.delegate = self
-        panel.contentView = NSHostingView(rootView: ClipboardPanelView(model: model) { [weak self] item in
+        panel.contentView = NSView.hosting(ClipboardPanelView(model: model) { [weak self] item in
             self?.onCommand(.paste(item, plainText: false))
         })
     }

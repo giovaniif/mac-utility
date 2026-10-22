@@ -117,7 +117,7 @@ final class KeystrokeOverlay {
         panel.ignoresMouseEvents = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: KeystrokeView(model: model))
+        panel.contentView = NSView.hosting(KeystrokeView(model: model))
     }
 
     /// Returns false if the event tap couldn't be created.
@@ -288,7 +288,7 @@ final class RecordingControl {
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: RecordingControlView(model: model, onAction: onAction))
+        panel.contentView = NSView.hosting(RecordingControlView(model: model, onAction: onAction))
     }
 
     func show(on screen: NSScreen) {

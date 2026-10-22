@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 extension NSWindow {
     /// Orders the window in and fades it up, optionally rising a few points.
@@ -31,5 +32,24 @@ extension NSWindow {
                 self.alphaValue = 1
             }
         }
+    }
+}
+
+extension NSView {
+    /// Plain container hosting SwiftUI, for panels whose frame we set
+    /// ourselves. As a window's content view, NSHostingView keeps updating the
+    /// window's size limits and transform from SwiftUI, which can fight our
+    /// frames until AppKit throws ("more Update Constraints in Window passes
+    /// than there are views"). Inside a container it just fills it.
+    static func hosting<Content: View>(_ rootView: Content) -> NSView {
+        container(for: NSHostingView(rootView: rootView))
+    }
+
+    static func container(for hosting: NSView) -> NSView {
+        let container = NSView(frame: hosting.frame)
+        hosting.frame = container.bounds
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        return container
     }
 }

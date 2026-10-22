@@ -9,6 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Hotkeys.register(actions)
+        #if DEBUG
+        if let path = UserDefaults.standard.string(forKey: "testPreview") {
+            actions.screenCapture.showTestPreview(URL(fileURLWithPath: path))
+        }
+        if UserDefaults.standard.bool(forKey: "testCaptureScreen") {
+            actions.screenCapture.captureScreen()
+        }
+        #endif
         if !permissions.allGranted {
             showOnboarding()
         }

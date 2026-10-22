@@ -44,13 +44,12 @@ final class QuickAccessOverlay {
         let view = QuickAccessView(model: model) { [weak self] action, result in
             self?.perform(action, on: result)
         }
-        panel.contentView = NSHostingView(rootView: view)
+        panel.contentView = NSView.hosting(view)
     }
 
     func show(_ result: CaptureResult) {
-        let wasEmpty = model.results.isEmpty
         layout(count: model.results.count + 1)
-        if wasEmpty { panel.fadeIn(duration: 0.2) }
+        if !panel.isVisible { panel.fadeIn(duration: 0.2) }
         withAnimation(.spring(duration: 0.4, bounce: 0.25)) { model.results.append(result) }
     }
 

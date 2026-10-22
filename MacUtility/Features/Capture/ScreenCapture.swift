@@ -28,6 +28,14 @@ final class ScreenCapture {
         self.permissions = permissions
     }
 
+    #if DEBUG
+    /// Launch with `-testPreview <file>` to show a preview without capturing.
+    func showTestPreview(_ url: URL) {
+        let image = NSImage(contentsOf: url) ?? NSWorkspace.shared.icon(forFile: url.path)
+        previews.show(CaptureResult(kind: .screenshot, url: url, thumbnail: image))
+    }
+    #endif
+
     func captureArea() {
         run { [self] in
             guard let target = await selector.select(.screenshot) else { return }
@@ -80,7 +88,8 @@ final class ScreenCapture {
 
     private func screenshot(_ target: CaptureTarget) async throws {
         previews.setHidden(true)
-        defer { previews.setHidden(false) }
+        var shown = false
+        defer { if !shown { previews.setHidden(false) } }
         // Give the selection overlay a frame to leave the screen.
         try await Task.sleep(for: .milliseconds(80))
 
@@ -102,7 +111,8 @@ final class ScreenCapture {
         try png.write(to: url, options: .atomic)
         NSSound(named: "Grab")?.play()
         log.info("screenshot saved: \(url.lastPathComponent)")
-        previews.show(CaptureResult(kind: .screenshot, url: url, thumbnail: NSImage(cgImage: image, size: .zero)))
+        shown = true
+        previews.show(CaptureResult(kind: .screenshot, url: url, thumbnail: NSImage(cgImage: image, size: rep.size)))
     }
 
     // MARK: Recording
