@@ -23,6 +23,8 @@ targets:
       properties:
         CFBundleDisplayName: Mac Utility
         LSUIElement: true
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSCameraUsageDescription: Shows your camera in a bubble while you record the screen.
         NSMicrophoneUsageDescription: Records your voice along with screen recordings.
         NSHumanReadableCopyright: ""
@@ -35,8 +37,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtility
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.1.1"
+        CURRENT_PROJECT_VERSION: "2"
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: Apple Development

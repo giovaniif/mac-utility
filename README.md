@@ -6,7 +6,7 @@ Native Swift (SwiftUI + AppKit), macOS 14 or later. Every feature can be switche
 
 ## Download
 
-Grab the DMG from the [latest release](https://github.com/giovaniif/mac-utility/releases/latest) and drag Mac Utility into Applications. The build isn't notarized yet, so on first launch right-click the app and choose Open.
+Grab the DMG from the [latest release](https://github.com/giovaniif/mac-utility/releases/latest) and drag Mac Utility into Applications. It's signed with Developer ID and notarized by Apple, and runs natively on Apple silicon and Intel.
 
 ## Features
 
@@ -83,6 +83,12 @@ To build from the command line:
 ```bash
 xcodebuild -project MacUtility.xcodeproj -scheme MacUtility -configuration Debug -derivedDataPath build build
 open build/Build/Products/Debug/MacUtility.app
+```
+
+To make a signed, notarized DMG in `build-release/` (needs a Developer ID Application certificate and `notarytool` credentials saved as `mac-utility`):
+
+```bash
+scripts/release.sh
 ```
 
 ## Tweaks
