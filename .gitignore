@@ -3,3 +3,5 @@ build/
 DerivedData/
 .DS_Store
 build-cleaning/
+build-release/
+*.dmg
