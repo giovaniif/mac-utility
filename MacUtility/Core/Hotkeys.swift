@@ -4,9 +4,9 @@ extension KeyboardShortcuts.Name {
     static let keyboardCleaning = Self("keyboardCleaning", default: .init(.k, modifiers: [.control, .option, .command]))
     static let clipboardHistory = Self("clipboardHistory", default: .init(.v, modifiers: [.shift, .command]))
     static let windowNextDisplay = Self("windowNextDisplay", default: .init(.rightArrow, modifiers: [.control, .command]))
-    static let captureArea = Self("captureArea", default: .init(.four, modifiers: [.option, .shift, .command]))
-    static let captureScreen = Self("captureScreen", default: .init(.three, modifiers: [.option, .shift, .command]))
-    static let recordScreen = Self("recordScreen", default: .init(.five, modifiers: [.option, .shift, .command]))
+    static let captureArea = Self("captureArea", default: .init(.four, modifiers: [.shift, .command]))
+    static let captureScreen = Self("captureScreen", default: .init(.three, modifiers: [.shift, .command]))
+    static let recordScreen = Self("recordScreen", default: .init(.five, modifiers: [.shift, .command]))
     static let windowPreviousDisplay = Self("windowPreviousDisplay", default: .init(.leftArrow, modifiers: [.control, .command]))
 }
 

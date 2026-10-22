@@ -33,6 +33,7 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Capture area or window", name: .captureArea)
                 KeyboardShortcuts.Recorder("Capture full screen", name: .captureScreen)
                 KeyboardShortcuts.Recorder("Record screen", name: .recordScreen)
+                SystemScreenshotShortcutsNotice()
             }
             Section("Recording") {
                 RecordingOptionToggles()

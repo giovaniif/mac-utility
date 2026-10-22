@@ -28,15 +28,16 @@ Remembers what you copy and lets you paste it again.
 - Keeps the last 1,000 items or 30 days, whichever comes first. Pinned items never expire.
 - Stored locally in SQLite (via [GRDB](https://github.com/groue/GRDB.swift)) with full-text search, in `~/Library/Application Support/MacUtility/`. Nothing leaves your Mac.
 
-### Screen capture — `⌥⇧⌘4` / `⌥⇧⌘3` / `⌥⇧⌘5`
+### Screen capture — `⇧⌘4` / `⇧⌘3` / `⇧⌘5`
 
-Screenshots and screen recordings in the style of CleanShot.
+Screenshots and screen recordings in the style of CleanShot. They take over the macOS screenshot shortcuts.
 
-- `⌥⇧⌘4` shows a crosshair. Drag to capture an area, with a live size label, or press `Space` and click a window. `Esc` cancels.
-- `⌥⇧⌘3` captures the whole screen under the pointer.
-- `⌥⇧⌘5` records the screen. Drag an area, or click or press `Return` for the full screen. A small floating bar shows the elapsed time and a Stop button, and stays out of the video. Press `⌥⇧⌘5` again to stop.
+- `⇧⌘4` shows a crosshair. Drag to capture an area, with a live size label, or press `Space` and click a window. `Esc` cancels.
+- `⇧⌘3` captures the whole screen under the pointer.
+- `⇧⌘5` records the screen. Drag an area, or click or press `Return` for the full screen. A small floating bar shows the elapsed time and a Stop button, and stays out of the video. Press `⇧⌘5` again to stop.
 - While recording you can add a round camera bubble you can drag around, your microphone, and a pill that shows the keys you press. Each one has a switch in the menu bar panel and in Settings.
 - After each capture a thumbnail stacks in the bottom-left corner. Drag it into any app, or hover for Copy, Show in Finder, Open and Trash. It goes away by itself after a few seconds.
+- macOS keeps its own screenshot shortcuts until you turn them off in System Settings → Keyboard → Keyboard Shortcuts → Screenshots. Settings shows a notice with a button to open that page while they're still on.
 - Screenshots are saved as PNG (sharp on Retina displays) and recordings as H.264 MP4, on the Desktop.
 
 ### Window manager — `⌃⌘→` / `⌃⌘←`
