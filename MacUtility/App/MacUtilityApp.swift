@@ -44,9 +44,6 @@ struct MenuBarContent: View {
                         Text("Recording").frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                RecordingOptionToggles()
-                    .padding(.leading, 12)
-                    .font(.callout)
             }
             Divider()
             HStack {

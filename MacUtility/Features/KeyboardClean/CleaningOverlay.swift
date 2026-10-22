@@ -35,7 +35,7 @@ final class CleaningOverlay {
                 rootView: CleaningOverlayView(countdown: countdown, onUnlock: onUnlock)
             )
             window.setFrame(screen.frame, display: true)
-            window.orderFrontRegardless()
+            window.fadeIn(duration: 0.25)
             windows.append(window)
         }
         NSApp.activate()
@@ -46,7 +46,7 @@ final class CleaningOverlay {
     }
 
     func hide() {
-        windows.forEach { $0.orderOut(nil) }
+        windows.forEach { $0.fadeOut(duration: 0.25) }
         windows.removeAll()
     }
 }

@@ -34,9 +34,9 @@ Screenshots and screen recordings in the style of CleanShot. They take over the 
 
 - `⇧⌘4` shows a crosshair. Drag to capture an area, with a live size label, or press `Space` and click a window. `Esc` cancels.
 - `⇧⌘3` captures the whole screen under the pointer.
-- `⇧⌘5` records the screen. Drag an area, or click or press `Return` for the full screen. A small floating bar shows the elapsed time and a Stop button, and stays out of the video. Press `⇧⌘5` again to stop.
-- While recording you can add a round camera bubble you can drag around, your microphone, and a pill that shows the keys you press. Each one has a switch in the menu bar panel and in Settings.
-- After each capture a thumbnail stacks in the bottom-left corner. Drag it into any app, or hover for Copy, Show in Finder, Open and Trash. It goes away by itself after a few seconds.
+- `⇧⌘5` records the screen. Drag an area, or click or press `Return` for the full screen. A floating bar then holds camera, microphone and keystroke switches plus Record. While recording it shows the elapsed time and Stop, and it stays out of the video. `⇧⌘5` also starts and stops.
+- The camera is a round bubble you can drag around, and keystrokes show as a pill near the bottom of the area. Both can be switched on or off mid-recording; the microphone is set before you start. The bar remembers your last choices.
+- After each capture a thumbnail stacks in the bottom-left corner and stays there until you drag it into an app, copy, save, trash or close it. Hover for the actions; double-click to open.
 - macOS keeps its own screenshot shortcuts until you turn them off in System Settings → Keyboard → Keyboard Shortcuts → Screenshots. Settings shows a notice with a button to open that page while they're still on.
 - Screenshots are saved as PNG (sharp on Retina displays) and recordings as H.264 MP4, on the Desktop.
 
@@ -46,7 +46,7 @@ Moves the focused window to the next or previous display, keeping its relative p
 
 ## Menu bar and Settings
 
-The menu bar panel holds on/off switches: one to start keyboard cleaning, one each to turn clipboard history, the window manager and screen capture on or off, and the camera, microphone and keystroke options for recordings.
+The menu bar panel holds on/off switches: one to start keyboard cleaning, and one each to turn clipboard history, the window manager and screen capture on or off.
 
 Settings has the feature switches, launch at login, every shortcut (all of them can be changed) and the permission status.
 

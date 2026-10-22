@@ -27,15 +27,14 @@ enum HUD {
         if let screen = NSScreen.main?.visibleFrame {
             panel.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2, width: size.width, height: size.height), display: true)
         }
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
+        panel.fadeIn(duration: 0.15)
         Self.panel = panel
 
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(for: .seconds(1.2))
             guard !Task.isCancelled else { return }
-            panel.orderOut(nil)
+            panel.fadeOut(duration: 0.25)
         }
     }
 }

@@ -29,7 +29,7 @@ final class ClipboardHistory {
     private func paste(_ item: ClipboardItem, plainText: Bool) {
         write(item, plainText: plainText)
         store.touch(item.id)
-        panel.hide()
+        panel.hide(animated: false)
 
         permissions.refresh()
         guard permissions.accessibility else {

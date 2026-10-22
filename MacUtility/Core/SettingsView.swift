@@ -35,9 +35,7 @@ struct SettingsView: View {
                 KeyboardShortcuts.Recorder("Record screen", name: .recordScreen)
                 SystemScreenshotShortcutsNotice()
             }
-            Section("Recording") {
-                RecordingOptionToggles()
-            }
+
             Section("Permissions") {
                 PermissionRows(permissions: permissions)
             }
@@ -111,15 +109,3 @@ private struct PermissionRow: View {
     }
 }
 
-/// Extras layered on top of a screen recording. Shared by Settings and the tray.
-struct RecordingOptionToggles: View {
-    @AppStorage(RecordingOptions.cameraKey) private var camera = false
-    @AppStorage(RecordingOptions.microphoneKey) private var microphone = false
-    @AppStorage(RecordingOptions.keystrokesKey) private var keystrokes = false
-
-    var body: some View {
-        Toggle(isOn: $camera) { Text("Camera").frame(maxWidth: .infinity, alignment: .leading) }
-        Toggle(isOn: $microphone) { Text("Microphone").frame(maxWidth: .infinity, alignment: .leading) }
-        Toggle(isOn: $keystrokes) { Text("Show keystrokes").frame(maxWidth: .infinity, alignment: .leading) }
-    }
-}

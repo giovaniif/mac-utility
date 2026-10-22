@@ -20,6 +20,9 @@ final class ScreenCapture {
     @ObservationIgnored private var camera: CameraBubble?
     @ObservationIgnored private var keystrokes: KeystrokeOverlay?
     @ObservationIgnored private var control: RecordingControl?
+    @ObservationIgnored private var recordArea = CGRect.zero
+    /// Waiting for Record or Cancel on the bar.
+    @ObservationIgnored private var pendingStart: CheckedContinuation<Bool, Never>?
 
     init(permissions: Permissions) {
         self.permissions = permissions
@@ -42,6 +45,9 @@ final class ScreenCapture {
     func toggleRecording() {
         if isRecording {
             Task { await stopRecording() }
+        } else if let pendingStart {
+            self.pendingStart = nil
+            pendingStart.resume(returning: true)
         } else {
             run { [self] in
                 guard let target = await selector.select(.recording) else { return }
@@ -102,40 +108,27 @@ final class ScreenCapture {
     // MARK: Recording
 
     private func startRecording(_ target: CaptureTarget) async throws {
-        let wantsCamera = RecordingOptions.camera
-        let wantsMic = RecordingOptions.microphone
-        if wantsCamera, !(await AVCaptureDevice.requestAccess(for: .video)) {
-            HUD.show("Camera access is off in System Settings")
-        }
-        if wantsMic, !(await AVCaptureDevice.requestAccess(for: .audio)) {
-            HUD.show("Microphone access is off in System Settings")
-        }
-        let cameraAllowed = wantsCamera && AVCaptureDevice.authorizationStatus(for: .video) == .authorized
-        let micAllowed = wantsMic && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-
-        let area = target.rect
-        let control = RecordingControl { [weak self] in
-            Task { await self?.stopRecording() }
-        }
+        recordArea = target.rect
+        let control = RecordingControl { [weak self] action in self?.handle(action) }
         control.show(on: target.screen ?? NSScreen.underMouse ?? NSScreen.screens[0])
         self.control = control
+        if control.model.camera { await setCamera(true) }
+        if control.model.keystrokes { setKeystrokes(true) }
 
-        if cameraAllowed, let camera = CameraBubble() {
-            camera.show(in: area)
-            self.camera = camera
+        let go = await withCheckedContinuation { pendingStart = $0 }
+        guard go else {
+            tearDownAccessories()
+            return
         }
-        if RecordingOptions.keystrokes {
-            permissions.refresh()
-            if permissions.inputMonitoring {
-                let overlay = KeystrokeOverlay()
-                if overlay.start(in: area) { keystrokes = overlay }
-            } else {
-                permissions.requestInputMonitoring()
-            }
+
+        var micAllowed = false
+        if control.model.microphone {
+            micAllowed = await AVCaptureDevice.requestAccess(for: .audio)
+            if !micAllowed { HUD.show("Microphone access is off in System Settings") }
         }
-        // Let the accessory windows reach the window server before the
-        // shareable content snapshot, so the control bar can be excluded.
-        try await Task.sleep(for: .milliseconds(150))
+        // Let the bar's window reach the window server before the shareable
+        // content snapshot, so it can be excluded.
+        try await Task.sleep(for: .milliseconds(100))
 
         do {
             let content = try await CaptureContent.make(for: target, excluding: [control.windowID])
@@ -144,11 +137,65 @@ final class ScreenCapture {
             try await recording.start()
             self.recording = recording
             isRecording = true
+            control.markRecording()
             log.info("recording started")
         } catch {
             tearDownAccessories()
             throw error
         }
+    }
+
+    private func handle(_ action: RecordingControl.Action) {
+        switch action {
+        case .record, .cancel:
+            let go = if case .record = action { true } else { false }
+            pendingStart?.resume(returning: go)
+            pendingStart = nil
+        case .stop:
+            Task { await stopRecording() }
+        case let .camera(on):
+            RecordingOptions.camera = on
+            Task { await setCamera(on) }
+        case let .microphone(on):
+            RecordingOptions.microphone = on
+        case let .keystrokes(on):
+            RecordingOptions.keystrokes = on
+            setKeystrokes(on)
+        }
+    }
+
+    private func setCamera(_ on: Bool) async {
+        guard on else {
+            camera?.hide()
+            camera = nil
+            return
+        }
+        guard camera == nil else { return }
+        guard await AVCaptureDevice.requestAccess(for: .video) else {
+            HUD.show("Camera access is off in System Settings")
+            control?.model.camera = false
+            return
+        }
+        guard control != nil, let bubble = CameraBubble() else { return }
+        bubble.show(in: recordArea)
+        camera = bubble
+    }
+
+    private func setKeystrokes(_ on: Bool) {
+        guard on else {
+            keystrokes?.stop()
+            keystrokes = nil
+            return
+        }
+        guard keystrokes == nil else { return }
+        permissions.refresh()
+        guard permissions.inputMonitoring else {
+            permissions.requestInputMonitoring()
+            control?.model.keystrokes = false
+            return
+        }
+        let overlay = KeystrokeOverlay()
+        if overlay.start(in: recordArea) { keystrokes = overlay }
     }
 
     private func stopRecording() async {

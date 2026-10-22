@@ -3,15 +3,24 @@ import AVFoundation
 import Observation
 import SwiftUI
 
-/// User choices for what goes on top of a recording, stored in UserDefaults.
+/// Last choices on the recording bar, remembered for the next recording.
 enum RecordingOptions {
     static let cameraKey = "recording.camera"
     static let microphoneKey = "recording.microphone"
     static let keystrokesKey = "recording.keystrokes"
 
-    static var camera: Bool { UserDefaults.standard.bool(forKey: cameraKey) }
-    static var microphone: Bool { UserDefaults.standard.bool(forKey: microphoneKey) }
-    static var keystrokes: Bool { UserDefaults.standard.bool(forKey: keystrokesKey) }
+    static var camera: Bool {
+        get { UserDefaults.standard.bool(forKey: cameraKey) }
+        set { UserDefaults.standard.set(newValue, forKey: cameraKey) }
+    }
+    static var microphone: Bool {
+        get { UserDefaults.standard.bool(forKey: microphoneKey) }
+        set { UserDefaults.standard.set(newValue, forKey: microphoneKey) }
+    }
+    static var keystrokes: Bool {
+        get { UserDefaults.standard.bool(forKey: keystrokesKey) }
+        set { UserDefaults.standard.set(newValue, forKey: keystrokesKey) }
+    }
 }
 
 /// Round, draggable camera bubble. It's a normal on-screen window, so the
@@ -63,7 +72,7 @@ final class CameraBubble {
         let inset: CGFloat = 24
         let origin = CGPoint(x: rect.maxX - Self.size - inset, y: rect.minY + inset)
         panel.setFrameOrigin(origin)
-        panel.orderFrontRegardless()
+        panel.fadeIn(duration: 0.2)
         // startRunning/stopRunning block, so keep them off the main thread.
         nonisolated(unsafe) let session = session
         Task.detached { session.startRunning() }
@@ -115,7 +124,7 @@ final class KeystrokeOverlay {
     func start(in rect: CGRect) -> Bool {
         area = rect
         panel.setFrame(NSRect(x: rect.midX - 300, y: rect.minY + 40, width: 600, height: 80), display: true)
-        panel.orderFrontRegardless()
+        panel.fadeIn(duration: 0.2)
 
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         guard let tap = CGEvent.tapCreate(
@@ -246,20 +255,28 @@ private struct KeystrokeView: View {
 @Observable
 final class RecordingControlModel {
     var started = Date()
+    var recording = false
+    var camera = RecordingOptions.camera
+    var microphone = RecordingOptions.microphone
+    var keystrokes = RecordingOptions.keystrokes
 }
 
-/// Small floating bar with elapsed time and a Stop button. It's excluded from
-/// the recording.
+/// CleanShot-style floating bar. Before recording it holds the camera,
+/// microphone and keystroke switches plus Record; while recording it shows
+/// the elapsed time and Stop. It's excluded from the recording.
 @MainActor
 final class RecordingControl {
-    private let model = RecordingControlModel()
+    enum Action { case record, stop, cancel, camera(Bool), microphone(Bool), keystrokes(Bool) }
+
+    let model = RecordingControlModel()
     private let panel: NSPanel
+    private static let size = CGSize(width: 300, height: 48)
 
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
 
-    init(onStop: @escaping @MainActor () -> Void) {
+    init(onAction: @escaping @MainActor (Action) -> Void) {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 170, height: 40),
+            contentRect: NSRect(origin: .zero, size: Self.size),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -271,14 +288,18 @@ final class RecordingControl {
         panel.isMovableByWindowBackground = true
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: RecordingControlView(model: model, onStop: onStop))
+        panel.contentView = NSHostingView(rootView: RecordingControlView(model: model, onAction: onAction))
     }
 
     func show(on screen: NSScreen) {
-        model.started = Date()
         let frame = screen.visibleFrame
-        panel.setFrameOrigin(CGPoint(x: frame.midX - 85, y: frame.maxY - 52))
-        panel.orderFrontRegardless()
+        panel.setFrameOrigin(CGPoint(x: frame.midX - Self.size.width / 2, y: frame.maxY - Self.size.height - 12))
+        panel.fadeIn(duration: 0.2, rise: -8)
+    }
+
+    func markRecording() {
+        model.started = Date()
+        withAnimation(.spring(duration: 0.3)) { model.recording = true }
     }
 
     func hide() { panel.orderOut(nil) }
@@ -286,26 +307,89 @@ final class RecordingControl {
 
 private struct RecordingControlView: View {
     let model: RecordingControlModel
-    let onStop: @MainActor () -> Void
+    let onAction: @MainActor (RecordingControl.Action) -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle().fill(.red).frame(width: 10, height: 10)
-            TimelineView(.periodic(from: model.started, by: 1)) { context in
-                Text(Duration.seconds(context.date.timeIntervalSince(model.started)), format: .time(pattern: .minuteSecond))
-                    .font(.system(.body, design: .monospaced))
+        HStack(spacing: 6) {
+            OptionButton(on: model.camera, onIcon: "video.fill", offIcon: "video.slash", help: "Camera") {
+                model.camera.toggle()
+                onAction(.camera(model.camera))
             }
-            Spacer(minLength: 0)
-            Button { onStop() } label: {
-                Image(systemName: "stop.fill")
-                    .frame(width: 28, height: 24)
+            OptionButton(on: model.microphone, onIcon: "mic.fill", offIcon: "mic.slash", help: model.recording ? "Microphone can only change before recording" : "Microphone") {
+                model.microphone.toggle()
+                onAction(.microphone(model.microphone))
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .help("Stop recording")
+            .disabled(model.recording)
+            OptionButton(on: model.keystrokes, onIcon: "keyboard.fill", offIcon: "keyboard", help: "Show keystrokes") {
+                model.keystrokes.toggle()
+                onAction(.keystrokes(model.keystrokes))
+            }
+
+            Divider().frame(height: 22).padding(.horizontal, 4)
+
+            if model.recording {
+                Circle().fill(.red).frame(width: 9, height: 9)
+                    .phaseAnimator([1.0, 0.35]) { dot, opacity in dot.opacity(opacity) } animation: { _ in .easeInOut(duration: 0.8) }
+                TimelineView(.periodic(from: model.started, by: 1)) { context in
+                    Text(Duration.seconds(context.date.timeIntervalSince(model.started)), format: .time(pattern: .minuteSecond))
+                        .font(.system(.body, design: .monospaced))
+                        .contentTransition(.numericText())
+                }
+                Spacer(minLength: 0)
+                Button { onAction(.stop) } label: {
+                    Image(systemName: "stop.fill").frame(width: 30, height: 24)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .help("Stop recording")
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Spacer(minLength: 0)
+                Button { onAction(.record) } label: {
+                    Label("Record", systemImage: "record.circle").frame(height: 24)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .keyboardShortcut(.defaultAction)
+                .transition(.scale.combined(with: .opacity))
+                Button { onAction(.cancel) } label: {
+                    Image(systemName: "xmark").frame(width: 20, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .help("Cancel")
+            }
         }
         .padding(.horizontal, 12)
-        .frame(width: 170, height: 40)
+        .frame(width: 300, height: 48)
         .background(.regularMaterial, in: Capsule())
+        .animation(.spring(duration: 0.3), value: model.recording)
+    }
+}
+
+private struct OptionButton: View {
+    let on: Bool
+    let onIcon: String
+    let offIcon: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: on ? onIcon : offIcon)
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 32, height: 30)
+                .foregroundStyle(on ? Color.accentColor : .secondary)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(on ? Color.accentColor.opacity(0.18) : hovering ? Color.primary.opacity(0.08) : .clear)
+                )
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.spring(duration: 0.25), value: on)
     }
 }

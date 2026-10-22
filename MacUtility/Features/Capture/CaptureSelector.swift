@@ -56,7 +56,7 @@ final class CaptureSelector {
                     self?.finish(target)
                 }
                 windows.append(window)
-                window.orderFrontRegardless()
+                window.fadeIn(duration: 0.12)
             }
             NSApp.activate()
             (windows.first { $0.screen == NSScreen.underMouse } ?? windows.first)?.makeKey()

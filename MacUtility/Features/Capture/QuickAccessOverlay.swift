@@ -17,18 +17,14 @@ struct CaptureResult: Identifiable {
 @Observable
 final class QuickAccessModel {
     var results: [CaptureResult] = []
-    var hovering = false
 }
 
 /// CleanShot-style stack of thumbnails in the bottom-left corner after each
-/// capture. Drag one into any app, or hover for actions. Each dismisses
-/// itself after a while unless the pointer is over the stack.
+/// capture. They stay until dragged out, copied, saved, trashed or closed.
 @MainActor
 final class QuickAccessOverlay {
     private let model = QuickAccessModel()
     private let panel: NSPanel
-    private var dismissTasks: [UUID: Task<Void, Never>] = [:]
-    private static let lifetime: Duration = .seconds(12)
     private static let width: CGFloat = 240
 
     init() {
@@ -52,10 +48,10 @@ final class QuickAccessOverlay {
     }
 
     func show(_ result: CaptureResult) {
-        model.results.append(result)
-        layout()
-        panel.orderFrontRegardless()
-        scheduleDismiss(result.id)
+        let wasEmpty = model.results.isEmpty
+        layout(count: model.results.count + 1)
+        if wasEmpty { panel.fadeIn(duration: 0.2) }
+        withAnimation(.spring(duration: 0.4, bounce: 0.25)) { model.results.append(result) }
     }
 
     /// Hides the stack while a capture is taken, so it doesn't end up in it.
@@ -67,41 +63,34 @@ final class QuickAccessOverlay {
         }
     }
 
-    private func layout() {
+    /// The panel is sized for the stack; cards animate inside it.
+    private func layout(count: Int) {
         guard let screen = NSScreen.underMouse else { return }
         let rowHeight: CGFloat = 170
-        let height = min(CGFloat(model.results.count) * rowHeight + 20, screen.visibleFrame.height)
+        let height = min(CGFloat(count) * rowHeight + 20, screen.visibleFrame.height)
         panel.setFrame(
             NSRect(x: screen.visibleFrame.minX + 16, y: screen.visibleFrame.minY + 16, width: Self.width, height: height),
             display: true
         )
     }
 
-    private func scheduleDismiss(_ id: UUID) {
-        dismissTasks[id]?.cancel()
-        dismissTasks[id] = Task { [weak self] in
-            try? await Task.sleep(for: Self.lifetime)
-            guard !Task.isCancelled, let self else { return }
-            if self.model.hovering {
-                self.scheduleDismiss(id)
+    private func remove(_ id: UUID) {
+        guard model.results.contains(where: { $0.id == id }) else { return }
+        withAnimation(.spring(duration: 0.35)) { model.results.removeAll { $0.id == id } }
+        let remaining = model.results.count
+        Task { [weak self] in
+            // Shrink the panel once the card has animated away.
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, self.model.results.count == remaining else { return }
+            if remaining == 0 {
+                self.panel.fadeOut()
             } else {
-                self.remove(id)
+                self.layout(count: remaining)
             }
         }
     }
 
-    private func remove(_ id: UUID) {
-        dismissTasks[id]?.cancel()
-        dismissTasks[id] = nil
-        model.results.removeAll { $0.id == id }
-        if model.results.isEmpty {
-            panel.orderOut(nil)
-        } else {
-            layout()
-        }
-    }
-
-    fileprivate enum Action { case open, copy, reveal, trash, close }
+    fileprivate enum Action { case open, copy, save, reveal, trash, close, dragged }
 
     private func perform(_ action: Action, on result: CaptureResult) {
         switch action {
@@ -118,12 +107,34 @@ final class QuickAccessOverlay {
             HUD.show("Copied")
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting([result.url])
+        case .save:
+            guard save(result) else { return }
         case .trash:
             try? FileManager.default.trashItem(at: result.url, resultingItemURL: nil)
-        case .close:
+        case .close, .dragged:
             break
         }
         if action != .reveal, action != .open { remove(result.id) }
+    }
+
+    /// Moves the capture to a place the user picks. False if cancelled.
+    private func save(_ result: CaptureResult) -> Bool {
+        let savePanel = NSSavePanel()
+        savePanel.nameFieldStringValue = result.url.lastPathComponent
+        savePanel.directoryURL = result.url.deletingLastPathComponent()
+        NSApp.activate()
+        guard savePanel.runModal() == .OK, let destination = savePanel.url else { return false }
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                _ = try FileManager.default.replaceItemAt(destination, withItemAt: result.url)
+            } else {
+                try FileManager.default.moveItem(at: result.url, to: destination)
+            }
+            return true
+        } catch {
+            HUD.show("Couldn't save: \(error.localizedDescription)")
+            return false
+        }
     }
 }
 
@@ -136,13 +147,14 @@ private struct QuickAccessView: View {
             Spacer(minLength: 0)
             ForEach(model.results) { result in
                 QuickAccessCard(result: result) { perform($0, result) }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .leading).combined(with: .opacity).combined(with: .scale(scale: 0.9)),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .animation(.spring(duration: 0.3), value: model.results.map(\.id))
-        .onHover { model.hovering = $0 }
     }
 }
 
@@ -158,55 +170,104 @@ private struct QuickAccessCard: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 220, height: 150)
                 .clipped()
-            if result.kind == .recording {
+                .blur(radius: hovering ? 2 : 0)
+            if result.kind == .recording, !hovering {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 36))
                     .foregroundStyle(.white.opacity(0.9))
                     .shadow(radius: 4)
+                    .transition(.opacity)
             }
+            Color.black.opacity(hovering ? 0.45 : 0)
             if hovering {
-                Color.black.opacity(0.45)
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
-                        button("Copy", "doc.on.doc", .copy)
-                        button("Show", "folder", .reveal)
+                        ActionButton(title: "Copy", icon: "doc.on.doc") { perform(.copy) }
+                        ActionButton(title: "Save", icon: "square.and.arrow.down") { perform(.save) }
                     }
                     HStack(spacing: 8) {
-                        button("Open", "arrow.up.forward.app", .open)
-                        button("Trash", "trash", .trash)
+                        ActionButton(title: "Show", icon: "folder") { perform(.reveal) }
+                        ActionButton(title: "Trash", icon: "trash") { perform(.trash) }
                     }
                 }
+                .transition(.scale(scale: 0.92).combined(with: .opacity))
                 VStack {
                     HStack {
-                        Button { perform(.close) } label: {
-                            Image(systemName: "xmark.circle.fill").font(.title3)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white)
+                        CloseButton { perform(.close) }
                         Spacer()
+                        ActionButton(title: nil, icon: "arrow.up.forward.app") { perform(.open) }
                     }
                     Spacer()
                 }
                 .padding(6)
+                .transition(.opacity)
             }
         }
         .frame(width: 220, height: 150)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.25)))
-        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(hovering ? 0.5 : 0.25)))
+        .shadow(color: .black.opacity(hovering ? 0.45 : 0.3), radius: hovering ? 12 : 8, y: hovering ? 5 : 3)
+        .scaleEffect(hovering ? 1.03 : 1)
+        .animation(.spring(duration: 0.28, bounce: 0.2), value: hovering)
         .onHover { hovering = $0 }
-        .onDrag { NSItemProvider(contentsOf: result.url) ?? NSItemProvider() }
-    }
-
-    private func button(_ title: String, _ icon: String, _ action: QuickAccessOverlay.Action) -> some View {
-        Button { perform(action) } label: {
-            Label(title, systemImage: icon)
-                .font(.caption.weight(.semibold))
-                .frame(width: 80, height: 26)
+        .onTapGesture(count: 2) { perform(.open) }
+        .onDrag {
+            // Leave once the drag is under way, like CleanShot.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { perform(.dragged) }
+            return NSItemProvider(contentsOf: result.url) ?? NSItemProvider()
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white)
-        .background(.white.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+private struct ActionButton: View {
+    let title: String?
+    let icon: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if let title {
+                    Label(title, systemImage: icon).frame(width: 80, height: 26)
+                } else {
+                    Image(systemName: icon).frame(width: 26, height: 26)
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white)
+            .background(.white.opacity(hovering ? 0.35 : 0.2), in: RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(hovering ? 1.05 : 1)
+        }
+        .buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct CloseButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.title3)
+                .foregroundStyle(.white.opacity(hovering ? 1 : 0.8))
+                .scaleEffect(hovering ? 1.12 : 1)
+        }
+        .buttonStyle(PressableStyle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+/// Shrinks a little while pressed.
+private struct PressableStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(duration: 0.2), value: configuration.isPressed)
     }
 }
 

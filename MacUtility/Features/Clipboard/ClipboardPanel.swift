@@ -86,13 +86,18 @@ final class ClipboardPanel: NSObject, NSWindowDelegate {
                 display: true
             )
         }
-        panel.makeKeyAndOrderFront(nil)
+        panel.fadeIn(duration: 0.2, rise: 16, makeKey: true)
         installKeyMonitor()
     }
 
-    func hide() {
+    /// Pasting hides instantly so key focus is back in the target app before ⌘V.
+    func hide(animated: Bool = true) {
         removeKeyMonitor()
-        panel.orderOut(nil)
+        if animated {
+            panel.fadeOut()
+        } else {
+            panel.orderOut(nil)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -191,6 +196,8 @@ private struct ClipboardPanelView: View {
                             }
                         }
                         .padding(.horizontal, 6)
+                        .padding(.vertical, 6)
+                        .animation(.spring(duration: 0.3), value: results.map(\.id))
                     }
                     .onChange(of: model.selection) {
                         if let item = model.selected {
@@ -212,6 +219,7 @@ private struct ClipboardCard: View {
     let index: Int
     let selected: Bool
     let thumbnail: NSImage?
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -240,6 +248,11 @@ private struct ClipboardCard: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3)
         )
+        .scaleEffect(selected ? 1.03 : hovering ? 1.015 : 1)
+        .shadow(color: .black.opacity(selected || hovering ? 0.25 : 0), radius: 8, y: 3)
+        .animation(.spring(duration: 0.25, bounce: 0.2), value: selected)
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .onHover { hovering = $0 }
         .contentShape(Rectangle())
     }
 
