@@ -1,0 +1,37 @@
+name: MacUtility
+options:
+  bundleIdPrefix: com.giovani
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: 2.0.0
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.0.0
+targets:
+  MacUtility:
+    type: application
+    platform: macOS
+    sources: [MacUtility]
+    dependencies:
+      - package: KeyboardShortcuts
+      - package: GRDB
+    info:
+      path: MacUtility/Info.plist
+      properties:
+        CFBundleDisplayName: Mac Utility
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtility
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: Apple Development
+        DEVELOPMENT_TEAM: 827UMZ89C2
+        GENERATE_INFOPLIST_FILE: NO

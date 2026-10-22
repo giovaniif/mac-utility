@@ -1,0 +1,32 @@
+import AppKit
+import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let permissions = Permissions()
+    lazy var actions = FeatureActions(permissions: permissions)
+    private var onboardingWindow: NSWindow?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Hotkeys.register(actions)
+        if !permissions.allGranted {
+            showOnboarding()
+        }
+    }
+
+    func showOnboarding() {
+        if onboardingWindow == nil {
+            let view = OnboardingView(permissions: permissions) { [weak self] in
+                self?.onboardingWindow?.close()
+            }
+            let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+            window.title = "Welcome to Mac Utility"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            onboardingWindow = window
+        }
+        NSApp.activate()
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+}
