@@ -34,6 +34,8 @@ final class ScreenCapture {
         let image = NSImage(contentsOf: url) ?? NSWorkspace.shared.icon(forFile: url.path)
         previews.show(CaptureResult(kind: .screenshot, url: url, thumbnail: image))
     }
+
+    func openTestEditor(_ url: URL) { previews.openEditor(url) }
     #endif
 
     func captureArea() {

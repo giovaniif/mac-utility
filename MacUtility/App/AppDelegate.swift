@@ -13,6 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let path = UserDefaults.standard.string(forKey: "testPreview") {
             actions.screenCapture.showTestPreview(URL(fileURLWithPath: path))
         }
+        if let path = UserDefaults.standard.string(forKey: "testEditorRender") {
+            ScreenshotEditor.renderSample(URL(fileURLWithPath: path), to: URL(fileURLWithPath: path + ".out.png"))
+        }
+        if let path = UserDefaults.standard.string(forKey: "testEditor") {
+            actions.screenCapture.openTestEditor(URL(fileURLWithPath: path))
+        }
         if UserDefaults.standard.bool(forKey: "testCaptureScreen") {
             actions.screenCapture.captureScreen()
         }

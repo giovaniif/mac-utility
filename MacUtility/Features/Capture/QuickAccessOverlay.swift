@@ -10,7 +10,7 @@ struct CaptureResult: Identifiable {
     let id = UUID()
     let kind: Kind
     let url: URL
-    let thumbnail: NSImage
+    var thumbnail: NSImage
 }
 
 @MainActor
@@ -97,12 +97,23 @@ final class QuickAccessOverlay {
         }
     }
 
-    fileprivate enum Action { case open, copy, save, reveal, trash, close, dragged }
+    fileprivate enum Action { case open, edit, copy, save, reveal, trash, close, dragged }
+
+    private let editor = ScreenshotEditor()
+
+    #if DEBUG
+    func openEditor(_ url: URL) { editor.open(url) { _, _ in } }
+    #endif
 
     private func perform(_ action: Action, on result: CaptureResult) {
         switch action {
         case .open:
             NSWorkspace.shared.open(result.url)
+        case .edit:
+            editor.open(result.url) { [weak self] _, edited in
+                guard let self, let index = self.model.results.firstIndex(where: { $0.id == result.id }) else { return }
+                withAnimation(.easeOut(duration: 0.25)) { self.model.results[index].thumbnail = edited }
+            }
         case .copy:
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
@@ -121,7 +132,7 @@ final class QuickAccessOverlay {
         case .close, .dragged:
             break
         }
-        if action != .reveal, action != .open { remove(result.id) }
+        if ![.reveal, .open, .edit].contains(action) { remove(result.id) }
     }
 
     /// Moves the capture to a place the user picks. False if cancelled.
@@ -202,7 +213,12 @@ private struct QuickAccessCard: View {
                     HStack {
                         CloseButton { perform(.close) }
                         Spacer()
+                        if result.kind == .screenshot {
+                            ActionButton(title: nil, icon: "pencil.tip.crop.circle") { perform(.edit) }
+                                .help("Annotate")
+                        }
                         ActionButton(title: nil, icon: "arrow.up.forward.app") { perform(.open) }
+                            .help("Open")
                     }
                     Spacer()
                 }
@@ -217,7 +233,7 @@ private struct QuickAccessCard: View {
         .scaleEffect(hovering ? 1.03 : 1)
         .animation(.spring(duration: 0.28, bounce: 0.2), value: hovering)
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { perform(.open) }
+        .onTapGesture(count: 2) { perform(result.kind == .screenshot ? .edit : .open) }
         .onDrag {
             // Leave once the drag is under way, like CleanShot.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { perform(.dragged) }
