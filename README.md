@@ -38,7 +38,7 @@ Screenshots and screen recordings in the style of CleanShot. They take over the 
 
 - `⇧⌘4` shows a crosshair. Drag to capture an area, with a live size label, or press `Space` and click a window. `Esc` cancels.
 - `⇧⌘3` captures the whole screen under the pointer.
-- `⇧⌘5` records the screen. Drag an area, press `Space` and click a window, or click or press `Return` for the full screen. A floating bar then holds camera, microphone and keystroke switches plus Record. While recording it shows the elapsed time and Stop, and it stays out of the video. `⇧⌘5` also starts and stops.
+- `⇧⌘5` records the screen. Drag an area, press `Space` and click a window, or click or press `Return` for the full screen. A floating bar then holds camera, microphone and keystroke switches plus Record. While recording it shows the elapsed time, Pause and Stop, and it stays out of the video. `⇧⌘5` also starts and stops.
 - The camera is a round bubble you can drag around, and keystrokes show as a pill near the bottom of the area. Both can be switched on or off mid-recording; the microphone is set before you start. The bar remembers your last choices.
 - Annotate screenshots from the preview's pencil button or by double-clicking it: arrows, lines, rectangles, ellipses, pen, highlighter, text, numbered steps, pixelate and crop, in eight colors and three widths. The select tool moves marks and `⌫` deletes them. `⌘Z`/`⇧⌘Z` undo and redo, `⌘S` saves over the file, `⌘C` copies the result.
 - After each capture a thumbnail stacks in the bottom-left corner and stays there until you drag it into an app, copy, save, trash or close it. Hover for the actions; double-click to open.

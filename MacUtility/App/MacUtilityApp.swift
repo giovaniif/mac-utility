@@ -43,6 +43,12 @@ struct MenuBarContent: View {
                     )) {
                         Text("Recording").frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    Toggle(isOn: Binding(
+                        get: { actions.screenCapture.isPaused },
+                        set: { _ in actions.screenCapture.togglePause() }
+                    )) {
+                        Text("Paused").frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             Divider()

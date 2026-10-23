@@ -17,6 +17,13 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
     private let micSession: AVCaptureSession?
     private var startTime: CMTime?
 
+    // Pausing drops samples and shifts later ones back by the paused time,
+    // so the file plays straight through. Screen and mic timestamps are both
+    // on the host clock, which is what the pause bookkeeping uses too.
+    private var pausedAt: CMTime?
+    private var resumedAt = CMTime.zero
+    private var pausedTotal = CMTime.zero
+
     init(content: CaptureContent, microphone: Bool, url: URL) throws {
         self.url = url
         // H.264 needs even dimensions.
@@ -79,6 +86,47 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
         try await stream.startCapture()
     }
 
+    func pause() {
+        queue.async { [self] in
+            guard pausedAt == nil else { return }
+            pausedAt = CMClockGetTime(CMClockGetHostTimeClock())
+        }
+    }
+
+    func resume() {
+        queue.async { [self] in
+            guard let pausedAt else { return }
+            let now = CMClockGetTime(CMClockGetHostTimeClock())
+            pausedTotal = pausedTotal + (now - pausedAt)
+            resumedAt = now
+            self.pausedAt = nil
+        }
+    }
+
+    /// Whether a sample captured at `time` belongs in the file: not while
+    /// paused, and not one captured during a pause but delivered after it.
+    private func keeps(_ time: CMTime) -> Bool {
+        if let pausedAt { return time < pausedAt }
+        return time >= resumedAt
+    }
+
+    private func shifted(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
+        guard pausedTotal != .zero else { return sampleBuffer }
+        var count: CMItemCount = 0
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: 0, arrayToFill: nil, entriesNeededOut: &count)
+        var timing = [CMSampleTimingInfo](repeating: CMSampleTimingInfo(), count: count)
+        CMSampleBufferGetSampleTimingInfoArray(sampleBuffer, entryCount: count, arrayToFill: &timing, entriesNeededOut: &count)
+        for index in timing.indices {
+            timing[index].presentationTimeStamp = timing[index].presentationTimeStamp - pausedTotal
+            if timing[index].decodeTimeStamp.isValid {
+                timing[index].decodeTimeStamp = timing[index].decodeTimeStamp - pausedTotal
+            }
+        }
+        var copy: CMSampleBuffer?
+        CMSampleBufferCreateCopyWithNewTiming(allocator: kCFAllocatorDefault, sampleBuffer: sampleBuffer, sampleTimingEntryCount: count, sampleTimingArray: &timing, sampleBufferOut: &copy)
+        return copy
+    }
+
     /// Stops capturing and finishes the file. Returns false if nothing usable
     /// was written.
     func stop() async -> Bool {
@@ -105,7 +153,9 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sampleBuffer.isValid, Self.isCompleteFrame(sampleBuffer) else { return }
-        guard writer.status == .writing else { return }
+        guard writer.status == .writing, keeps(sampleBuffer.presentationTimeStamp),
+              let sampleBuffer = shifted(sampleBuffer)
+        else { return }
         if startTime == nil {
             let time = sampleBuffer.presentationTimeStamp
             writer.startSession(atSourceTime: time)
@@ -118,6 +168,8 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let audioInput, let startTime, writer.status == .writing,
+              keeps(sampleBuffer.presentationTimeStamp),
+              let sampleBuffer = shifted(sampleBuffer),
               sampleBuffer.presentationTimeStamp >= startTime,
               audioInput.isReadyForMoreMediaData
         else { return }

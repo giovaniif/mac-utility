@@ -10,6 +10,7 @@ import os
 @Observable
 final class ScreenCapture {
     private(set) var isRecording = false
+    private(set) var isPaused = false
 
     @ObservationIgnored private let log = Logger(subsystem: "com.giovani.MacUtility", category: "capture")
     @ObservationIgnored private let permissions: Permissions
@@ -162,6 +163,8 @@ final class ScreenCapture {
             pendingStart = nil
         case .stop:
             Task { await stopRecording() }
+        case .pause, .resume:
+            togglePause()
         case let .camera(on):
             RecordingOptions.camera = on
             Task { await setCamera(on) }
@@ -207,10 +210,23 @@ final class ScreenCapture {
         if overlay.start(in: recordArea) { keystrokes = overlay }
     }
 
+    func togglePause() {
+        guard let recording, let control else { return }
+        isPaused.toggle()
+        if isPaused {
+            recording.pause()
+        } else {
+            recording.resume()
+        }
+        control.markPaused(isPaused)
+        log.info("recording \(self.isPaused ? "paused" : "resumed")")
+    }
+
     private func stopRecording() async {
         guard let recording else { return }
         self.recording = nil
         isRecording = false
+        isPaused = false
         tearDownAccessories()
         let ok = await recording.stop()
         guard ok else {

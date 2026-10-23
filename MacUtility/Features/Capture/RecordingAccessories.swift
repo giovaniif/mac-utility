@@ -256,6 +256,13 @@ private struct KeystrokeView: View {
 final class RecordingControlModel {
     var started = Date()
     var recording = false
+    var paused = false
+    /// Recorded time before the current run, i.e. up to the last pause.
+    var elapsedBefore: TimeInterval = 0
+
+    func elapsed(at date: Date) -> TimeInterval {
+        paused ? elapsedBefore : elapsedBefore + date.timeIntervalSince(started)
+    }
     var camera = RecordingOptions.camera
     var microphone = RecordingOptions.microphone
     var keystrokes = RecordingOptions.keystrokes
@@ -266,11 +273,11 @@ final class RecordingControlModel {
 /// the elapsed time and Stop. It's excluded from the recording.
 @MainActor
 final class RecordingControl {
-    enum Action { case record, stop, cancel, camera(Bool), microphone(Bool), keystrokes(Bool) }
+    enum Action { case record, stop, cancel, pause, resume, camera(Bool), microphone(Bool), keystrokes(Bool) }
 
     let model = RecordingControlModel()
     private let panel: NSPanel
-    private static let size = CGSize(width: 300, height: 48)
+    private static let size = CGSize(width: 340, height: 48)
 
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
 
@@ -299,7 +306,19 @@ final class RecordingControl {
 
     func markRecording() {
         model.started = Date()
+        model.elapsedBefore = 0
+        model.paused = false
         withAnimation(.spring(duration: 0.3)) { model.recording = true }
+    }
+
+    func markPaused(_ paused: Bool) {
+        let now = Date()
+        if paused {
+            model.elapsedBefore = model.elapsed(at: now)
+        } else {
+            model.started = now
+        }
+        model.paused = paused
     }
 
     func hide() { panel.orderOut(nil) }
@@ -328,14 +347,24 @@ private struct RecordingControlView: View {
             Divider().frame(height: 22).padding(.horizontal, 4)
 
             if model.recording {
-                Circle().fill(.red).frame(width: 9, height: 9)
-                    .phaseAnimator([1.0, 0.35]) { dot, opacity in dot.opacity(opacity) } animation: { _ in .easeInOut(duration: 0.8) }
+                if model.paused {
+                    Image(systemName: "pause.fill").font(.system(size: 9)).foregroundStyle(.orange)
+                } else {
+                    Circle().fill(.red).frame(width: 9, height: 9)
+                        .phaseAnimator([1.0, 0.35]) { dot, opacity in dot.opacity(opacity) } animation: { _ in .easeInOut(duration: 0.8) }
+                }
                 TimelineView(.periodic(from: model.started, by: 1)) { context in
-                    Text(Duration.seconds(context.date.timeIntervalSince(model.started)), format: .time(pattern: .minuteSecond))
+                    Text(Duration.seconds(model.elapsed(at: context.date)), format: .time(pattern: .minuteSecond))
                         .font(.system(.body, design: .monospaced))
                         .contentTransition(.numericText())
                 }
                 Spacer(minLength: 0)
+                Button { onAction(model.paused ? .resume : .pause) } label: {
+                    Image(systemName: model.paused ? "play.fill" : "pause.fill").frame(width: 30, height: 24)
+                }
+                .buttonStyle(.bordered)
+                .help(model.paused ? "Resume recording" : "Pause recording")
+                .transition(.scale.combined(with: .opacity))
                 Button { onAction(.stop) } label: {
                     Image(systemName: "stop.fill").frame(width: 30, height: 24)
                 }
@@ -360,7 +389,7 @@ private struct RecordingControlView: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(width: 300, height: 48)
+        .frame(width: 340, height: 48)
         .background(.regularMaterial, in: Capsule())
         .animation(.spring(duration: 0.3), value: model.recording)
     }
