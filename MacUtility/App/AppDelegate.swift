@@ -23,7 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actions.screenCapture.captureScreen()
         }
         #endif
-        if !permissions.allGranted {
+        // Only on first launch; after that Settings shows the same rows.
+        if !UserDefaults.standard.bool(forKey: "onboardingShown"), !permissions.allGranted {
+            UserDefaults.standard.set(true, forKey: "onboardingShown")
             showOnboarding()
         }
     }

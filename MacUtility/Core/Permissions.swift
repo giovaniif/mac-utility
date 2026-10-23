@@ -11,7 +11,7 @@ final class Permissions {
     private(set) var inputMonitoring = CGPreflightListenEventAccess()
     private(set) var screenRecording = CGPreflightScreenCaptureAccess()
 
-    var allGranted: Bool { accessibility && inputMonitoring }
+    var allGranted: Bool { accessibility && inputMonitoring && screenRecording }
 
     private var timer: Timer?
 
