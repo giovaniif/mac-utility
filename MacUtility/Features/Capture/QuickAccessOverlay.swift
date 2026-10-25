@@ -26,6 +26,10 @@ final class QuickAccessOverlay {
     private let model = QuickAccessModel()
     private let panel: NSPanel
     private static let width: CGFloat = 240
+    /// Display the stack sits on; it follows the pointer between displays.
+    private var screenID: CGDirectDisplayID?
+    private var followTimer: Timer?
+    private var hiddenForRecording = false
 
     init() {
         panel = NSPanel(
@@ -53,9 +57,12 @@ final class QuickAccessOverlay {
 
     /// Keeps the stack off screen while recording, then brings it back.
     func setHidden(_ hidden: Bool) {
+        hiddenForRecording = hidden
         if hidden {
             panel.fadeOut()
         } else if !model.results.isEmpty {
+            screenID = NSScreen.underMouse?.displayID
+            layout(count: model.results.count)
             panel.fadeIn(duration: 0.2)
         }
     }
@@ -63,16 +70,51 @@ final class QuickAccessOverlay {
     /// The newest card goes on top. The panel grows upward from a fixed
     /// bottom edge, so the cards already showing don't move.
     func show(_ result: CaptureResult) {
+        if model.results.isEmpty { screenID = NSScreen.underMouse?.displayID }
         layout(count: model.results.count + 1)
         if !panel.isVisible { panel.orderFrontRegardless() }
         withAnimation(.easeOut(duration: 0.3)) { model.results.insert(result, at: 0) }
+        startFollowing()
+    }
+
+    /// Checks a few times a second which display the pointer is on and
+    /// moves the stack there with a quick cross-fade.
+    private func startFollowing() {
+        guard followTimer == nil else { return }
+        followTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.followPointer() }
+        }
+    }
+
+    private func stopFollowing() {
+        followTimer?.invalidate()
+        followTimer = nil
+    }
+
+    private func followPointer() {
+        guard !model.results.isEmpty, !hiddenForRecording, panel.isVisible,
+              let target = NSScreen.underMouse?.displayID, target != screenID
+        else { return }
+        screenID = target
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.12
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.layout(count: self.model.results.count)
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.18
+                    self.panel.animator().alphaValue = 1
+                }
+            }
+        }
     }
 
     /// The panel is sized for the stack; cards animate inside it.
     private func layout(count: Int) {
-        // Stay on the same display while cards are showing.
-        let current = panel.isVisible ? panel.screen : nil
-        guard let screen = current ?? NSScreen.underMouse else { return }
+        let screen = NSScreen.screens.first { $0.displayID == screenID } ?? NSScreen.underMouse
+        guard let screen else { return }
         let rowHeight: CGFloat = 170
         let height = min(CGFloat(count) * rowHeight + 20, screen.visibleFrame.height)
         panel.setFrame(
@@ -90,6 +132,7 @@ final class QuickAccessOverlay {
             try? await Task.sleep(for: .milliseconds(350))
             guard let self, self.model.results.count == remaining else { return }
             if remaining == 0 {
+                self.stopFollowing()
                 self.panel.fadeOut()
             } else {
                 self.layout(count: remaining)
