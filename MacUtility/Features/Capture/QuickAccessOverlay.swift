@@ -97,7 +97,7 @@ final class QuickAccessOverlay {
         }
     }
 
-    fileprivate enum Action { case open, edit, copy, save, reveal, trash, close, dragged }
+    fileprivate enum Action { case open, edit, copy, save, trash, close, dragged }
 
     private let editor = ScreenshotEditor()
 
@@ -118,36 +118,45 @@ final class QuickAccessOverlay {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             if result.kind == .screenshot, let image = NSImage(contentsOf: result.url) {
+                // The pasteboard holds the image itself, so the file can go.
                 pasteboard.writeObjects([image])
+                CaptureFiles.discard(result.url)
             } else {
+                // A pasted recording reads the file later; it's cleared next launch.
                 pasteboard.writeObjects([result.url as NSURL])
             }
             HUD.show("Copied")
-        case .reveal:
-            NSWorkspace.shared.activateFileViewerSelecting([result.url])
         case .save:
             guard save(result) else { return }
-        case .trash:
-            try? FileManager.default.trashItem(at: result.url, resultingItemURL: nil)
-        case .close, .dragged:
+        case .trash, .close:
+            if CaptureFiles.isPending(result.url) {
+                CaptureFiles.discard(result.url)
+            } else {
+                try? FileManager.default.trashItem(at: result.url, resultingItemURL: nil)
+            }
+        case .dragged:
+            // The drop may still be copying the file; it's cleared next launch.
             break
         }
-        if ![.reveal, .open, .edit].contains(action) { remove(result.id) }
+        if ![.open, .edit].contains(action) { remove(result.id) }
     }
 
     /// Moves the capture to a place the user picks. False if cancelled.
     private func save(_ result: CaptureResult) -> Bool {
         let savePanel = NSSavePanel()
         savePanel.nameFieldStringValue = result.url.lastPathComponent
-        savePanel.directoryURL = result.url.deletingLastPathComponent()
+        savePanel.directoryURL = CaptureFiles.folder
         NSApp.activate()
         guard savePanel.runModal() == .OK, let destination = savePanel.url else { return false }
+        if destination.standardizedFileURL == result.url.standardizedFileURL { return true }
         do {
+            // The panel already asked about replacing, so move the old file
+            // to the Trash and put the capture in its place.
             if FileManager.default.fileExists(atPath: destination.path) {
-                _ = try FileManager.default.replaceItemAt(destination, withItemAt: result.url)
-            } else {
-                try FileManager.default.moveItem(at: result.url, to: destination)
+                try FileManager.default.trashItem(at: destination, resultingItemURL: nil)
             }
+            try FileManager.default.moveItem(at: result.url, to: destination)
+            HUD.show("Saved to \(destination.deletingLastPathComponent().lastPathComponent)")
             return true
         } catch {
             HUD.show("Couldn't save: \(error.localizedDescription)")
@@ -204,7 +213,11 @@ private struct QuickAccessCard: View {
                         ActionButton(title: "Save", icon: "square.and.arrow.down") { perform(.save) }
                     }
                     HStack(spacing: 8) {
-                        ActionButton(title: "Show", icon: "folder") { perform(.reveal) }
+                        if result.kind == .screenshot {
+                            ActionButton(title: "Edit", icon: "pencil.tip.crop.circle") { perform(.edit) }
+                        } else {
+                            ActionButton(title: "Open", icon: "play.rectangle") { perform(.open) }
+                        }
                         ActionButton(title: "Trash", icon: "trash") { perform(.trash) }
                     }
                 }
@@ -213,10 +226,6 @@ private struct QuickAccessCard: View {
                     HStack {
                         CloseButton { perform(.close) }
                         Spacer()
-                        if result.kind == .screenshot {
-                            ActionButton(title: nil, icon: "pencil.tip.crop.circle") { perform(.edit) }
-                                .help("Annotate")
-                        }
                         ActionButton(title: nil, icon: "arrow.up.forward.app") { perform(.open) }
                             .help("Open")
                     }

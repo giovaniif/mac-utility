@@ -27,6 +27,7 @@ final class ScreenCapture {
 
     init(permissions: Permissions) {
         self.permissions = permissions
+        CaptureFiles.clearPending()
     }
 
     #if DEBUG

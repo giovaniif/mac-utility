@@ -62,7 +62,9 @@ struct CaptureContent {
     }
 }
 
-/// Where captures land. Override with
+/// New captures wait in a cache folder while their preview is up, so ones
+/// you only copy, drag or dismiss never take disk space. Save moves them to
+/// the save folder: the Desktop, or
 /// `defaults write com.giovani.MacUtility captureFolder <path>`.
 enum CaptureFiles {
     static var folder: URL {
@@ -72,10 +74,30 @@ enum CaptureFiles {
         return URL.desktopDirectory
     }
 
+    static let pendingFolder = URL.cachesDirectory.appending(path: "com.giovani.MacUtility/Captures", directoryHint: .isDirectory)
+
     static func newURL(prefix: String, ext: String) -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-        let base = "\(prefix) \(formatter.string(from: Date()))"
+        try? FileManager.default.createDirectory(at: pendingFolder, withIntermediateDirectories: true)
+        return uniqueURL(in: pendingFolder, base: "\(prefix) \(timestamp())", ext: ext)
+    }
+
+    static func isPending(_ url: URL) -> Bool {
+        url.standardizedFileURL.path.hasPrefix(pendingFolder.standardizedFileURL.path)
+    }
+
+    /// Deletes a capture that was never saved.
+    static func discard(_ url: URL) {
+        guard isPending(url) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Clears captures left from the last run (dragged or copied recordings
+    /// stay until then, since the drop or paste may still read the file).
+    static func clearPending() {
+        try? FileManager.default.removeItem(at: pendingFolder)
+    }
+
+    static func uniqueURL(in folder: URL, base: String, ext: String) -> URL {
         var url = folder.appending(path: "\(base).\(ext)")
         var counter = 2
         while FileManager.default.fileExists(atPath: url.path) {
@@ -83,5 +105,11 @@ enum CaptureFiles {
             counter += 1
         }
         return url
+    }
+
+    private static func timestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        return formatter.string(from: Date())
     }
 }

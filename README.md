@@ -42,8 +42,9 @@ Screenshots and screen recordings in the style of CleanShot. They take over the 
 - The camera is a round bubble you can drag around, and keystrokes show as a pill near the bottom of the area. Both can be switched on or off mid-recording; the microphone is set before you start. The bar remembers your last choices.
 - Annotate screenshots from the preview's pencil button or by double-clicking it: arrows, lines, rectangles, ellipses, pen, highlighter, text, numbered steps, pixelate and crop, in eight colors and three widths. The select tool moves marks and `⌫` deletes them. `⌘Z`/`⇧⌘Z` undo and redo, `⌘S` saves over the file, `⌘C` copies the result.
 - After each capture a thumbnail stacks in the bottom-left corner and stays there until you drag it into an app, copy, save, trash or close it. Hover for the actions; double-click to open.
+- Captures only land on disk when you save them. Until then they wait in a cache folder, and copying, dragging or closing a preview never leaves a file behind.
 - macOS keeps its own screenshot shortcuts until you turn them off in System Settings → Keyboard → Keyboard Shortcuts → Screenshots. Settings shows a notice with a button to open that page while they're still on.
-- Screenshots are saved as PNG (sharp on Retina displays) and recordings as H.264 MP4, on the Desktop.
+- Save asks where to put the file, starting on the Desktop. Screenshots are PNG (sharp on Retina displays) and recordings H.264 MP4.
 
 ### Window manager — `⌃⌘→` / `⌃⌘←`
 
@@ -100,7 +101,7 @@ defaults write com.giovani.MacUtility keyboardCleaningTimeout 30        # second
 defaults write com.giovani.MacUtility clipboardMaxItems 500             # history size
 defaults write com.giovani.MacUtility clipboardMaxDays 7                # history age
 defaults write com.giovani.MacUtility clipboardExcludedApps -array com.1password.1password
-defaults write com.giovani.MacUtility captureFolder ~/Pictures/Captures # where captures are saved
+defaults write com.giovani.MacUtility captureFolder ~/Pictures/Captures # where Save starts
 ```
 
 ## Project layout
