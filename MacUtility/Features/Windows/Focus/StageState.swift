@@ -7,12 +7,37 @@ enum SetLayout: String, Codable, Sendable {
     case split, stacked
 }
 
+/// How a split set divides the stage, named after vim's splits.
+enum SplitAxis: String, Codable, Sendable {
+    /// Side by side, like `:vsplit`.
+    case vertical
+    /// Top and bottom, like `:split`.
+    case horizontal
+}
+
+enum PaneDirection: Sendable {
+    case left, down, up, right
+}
+
 /// Up to two windows shown together on the stage.
 struct FocusSet: Codable, Equatable, Sendable {
     var windows: [WindowID] = []
     var focused: WindowID?
     var layout: SetLayout = .split
     var ratio: Double = 0.5
+    var axis: SplitAxis = .vertical
+
+    init() {}
+
+    // Sets saved before `axis` existed decode as side by side.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        windows = try container.decode([WindowID].self, forKey: .windows)
+        focused = try container.decodeIfPresent(WindowID.self, forKey: .focused)
+        layout = try container.decodeIfPresent(SetLayout.self, forKey: .layout) ?? .split
+        ratio = try container.decodeIfPresent(Double.self, forKey: .ratio) ?? 0.5
+        axis = try container.decodeIfPresent(SplitAxis.self, forKey: .axis) ?? .vertical
+    }
 
     var isEmpty: Bool { windows.isEmpty }
     var hasRoom: Bool { windows.count < StageState.maxPerSet }
@@ -193,6 +218,62 @@ struct StageState: Codable, Equatable, Sendable {
     mutating func toggleLayout() {
         guard currentSet.windows.count == 2 else { return }
         currentSet.layout = currentSet.layout == .split ? .stacked : .split
+    }
+
+    /// `v`/`s` on a full set: side by side or top and bottom, shown split.
+    mutating func setAxis(_ axis: SplitAxis) {
+        currentSet.axis = axis
+        currentSet.layout = .split
+    }
+
+    /// Focus the pane in a direction, like vim's Ctrl-w h/j/k/l. Returns
+    /// false when there's no pane that way.
+    @discardableResult
+    mutating func focusPane(_ direction: PaneDirection) -> Bool {
+        let set = currentSet
+        guard set.windows.count == 2, set.layout == .split else { return false }
+        let target: WindowID? = switch (set.axis, direction) {
+        case (.vertical, .left), (.horizontal, .up): set.windows[0]
+        case (.vertical, .right), (.horizontal, .down): set.windows[1]
+        default: nil
+        }
+        guard let target, target != set.focused else { return false }
+        currentSet.focused = target
+        return true
+    }
+
+    /// Split: bring a window from another set into the current one, beside
+    /// the focused window. Returns the set it came from.
+    @discardableResult
+    mutating func pullIn(_ id: WindowID, axis: SplitAxis) -> Int? {
+        guard currentSet.hasRoom, let from = setNumber(of: id), from != current else { return nil }
+        self[set: from].remove(id)
+        currentSet.insert(id)
+        currentSet.focused = id
+        currentSet.axis = axis
+        currentSet.layout = .split
+        return from
+    }
+
+    /// Split with a window that isn't managed yet (an app opening a window).
+    mutating func pullInNew(_ id: WindowID, axis: SplitAxis) -> Bool {
+        guard currentSet.hasRoom, !contains(id) else { return false }
+        currentSet.insert(id)
+        currentSet.focused = id
+        currentSet.axis = axis
+        currentSet.layout = .split
+        return true
+    }
+
+    /// Only, like vim's Ctrl-w o: keep the focused window, move the other to
+    /// a new set. Returns where it went, or nil when nothing moved.
+    @discardableResult
+    mutating func only() -> Int? {
+        guard let other = currentSet.unfocused,
+              let target = lowestEmpty(excluding: current) ?? lowestWithRoom(excluding: current) else { return nil }
+        currentSet.remove(other)
+        self[set: target].insert(other)
+        return target
     }
 
     mutating func setRatio(_ ratio: Double) {

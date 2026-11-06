@@ -84,73 +84,76 @@ The screen shows one small group of windows at a time. Everything else is parked
 
 ### Model
 
-- **Stage:** the visible frame of the managed display, minus a 12 pt gap on every side. Only the current set is on it.
+- **Stage:** the visible frame of the managed display, minus a gap on every side (12 pt by default, 0–40 pt in Settings), the same gap as between two windows. Only the current set is on it.
 - **Set:** up to 2 windows, numbered 1–9. A set is named after its first window's app, and has a layout. The stage shows exactly one set at a time.
 - **Layouts:**
   - One window: it fills the stage, up to a width cap, then centers.
   - Two windows: either split side by side, or stacked, where only the focused one shows at full stage size and the other is parked behind it.
   - Split ratio: drag the gap to change it. It snaps to 1/3, 1/2 and 2/3. The default is 1/2.
 - **Width cap:** a lone window stops at 1440 pt wide and centers. On the laptop this never kicks in, but on the 1920 Dell it does. Split sets use the full width. The cap is configurable in Settings.
-- **Floating:** dialogs, sheets, panels, windows that can't be resized, and apps on a float list are never tiled or counted. They stay where the app puts them. `⌃Space` `\` toggles floating for the focused window.
+- **Floating:** dialogs, sheets, panels, windows that can't be resized, and apps on a float list are never tiled or counted. They stay where the app puts them. `⌃B` `\` toggles floating for the focused window.
 - **Unmanaged:** minimized windows, native full-screen windows, windows on other displays and windows on other macOS Spaces. When a window becomes managed again, it rejoins the set it was in.
 
 ### Rules
 
 - **New window:** it joins the current set if the set has room. Otherwise it opens a new set (the lowest free number), takes you there, and the HUD says why.
-- **Closing a window:** if one window is left, it fills the stage. If the set becomes empty, it keeps its number and you stay on an empty stage. `⌃Space` `⇥` takes you back.
-- **Sending a window to a set (`⌃Space` `⇧N`):** if set N has room, the window joins it. If set N is full, the window swaps places with set N's unfocused window. You stay on the current set.
-- **Replace (`⌃Space` `R`):** puts a window from another set, or a new app, into the focused window's place.
+- **Closing a window:** if one window is left, it fills the stage. If the set becomes empty, it keeps its number and you stay on an empty stage. `⌃B` `⇥` takes you back.
+- **Sending a window to a set (`⌃B` `⇧N`):** if set N has room, the window joins it. If set N is full, the window swaps places with set N's unfocused window. You go with it to set N, with the same slide as a switch.
+- **Replace (`⌃B` `R`):** puts a window from another set, or a new app, into the focused window's place.
   - A window from another set trades places with the focused window.
   - A new app pushes the focused window into a new set.
   - The HUD offers Undo for 5 s.
 - **Quitting an app** takes its windows out of their sets. When the app relaunches, its windows go back to their last set, matched by bundle ID plus window title, or by bundle ID alone for apps with one window.
 - **Pinning:** an app can be pinned to a set (Settings, or the switcher's context menu). Its new windows go there instead of following the new-window rule.
-- **Previous set:** `⌃Space` `⇥` goes back to the last set you were in. Doing it again comes back, like i3.
+- **Previous set:** `⌃B` `⇥` goes back to the last set you were in. Doing it again comes back, like i3.
 
 ### Shortcuts: a leader key, like tmux
 
-- **Leader:** press `⌃Space`, let go, then press one command key, e.g. `⌃Space` `3` goes to set 3. It's the only global hotkey Focus registers, and it can be rebound in Settings.
+- **Leader:** press `⌃B` (like tmux's prefix), let go, then press one command key, e.g. `⌃B` `3` goes to set 3. It's the only global hotkey Focus registers, and it can be rebound in Settings.
 - **Key guide:** if no second key comes within 500 ms, a small key guide appears at the bottom of the screen. The shelf appears at the same time, since a pause usually means you're looking for something. The leader stays armed until you press a key, press `Esc` or click elsewhere.
 - **Arrows repeat:** after an arrow, the leader stays armed for 600 ms so more arrows work without pressing it again, like tmux's repeat flag.
-- **Passthrough:** pressing `⌃Space` twice sends `⌃Space` to the app. macOS uses `⌃Space` to switch input source by default. That doesn't matter here with one keyboard layout; anyone with several should move that shortcut in System Settings.
+- **Passthrough:** pressing `⌃B` twice sends `⌃B` to the app. That's how tmux's own prefix and Emacs-style "back one character" in text fields still work.
 - **Unknown keys:** an unbound key closes the guide and does nothing. It never reaches the app.
 
-| After `⌃Space` | Action |
+| After `⌃B` | Action |
 | --- | --- |
 | `1`–`9` | Go to set |
 | `⇧1`–`9` | Send focused window to set |
 | `⇥` | Previous set |
-| `←` / `→` | Focus the other window in the set |
-| `⇧←` / `⇧→` | Swap the two windows |
+| `v` | Split side by side (vim `Ctrl-w v`): the window takes the left half now, a picker opens in the empty right pane. With two windows, turn the split side by side |
+| `s` | Same, top and bottom (vim `Ctrl-w s`) |
+| `o` | Only (vim `Ctrl-w o`): keep the focused window, move the other to a new set |
+| `h` `j` `k` `l` / arrows | Focus the pane in that direction |
+| `⇧h` `⇧j` `⇧k` `⇧l` / `⇧`arrows | Swap the two windows |
 | `↩` | Split ⇄ stacked |
 | `Space` | Switcher |
 | `R` | Replace focused window |
 | `F` | Zoom focused window to the full stage, no width cap; again to restore |
 | `\` | Float / unfloat |
-| `⌃Space` | Send `⌃Space` to the app |
+| `⌃B` | Send `⌃B` to the app |
 | `Esc` | Cancel |
 
-`⌃⌘←`/`⌃⌘→` (move window to the other display) stay direct hotkeys, unchanged.
+`⌃⌘←`/`⌃⌘→` (move window to the other display) stay direct hotkeys, unchanged. A three-finger swipe up opens the switcher and a swipe down closes it (three or four fingers, or off, in Settings). macOS has no public API for trackpad gestures, so this reads raw touches through the private MultitouchSupport framework, loaded at runtime like MiddleClick and BetterTouchTool do; if it's missing, the swipe does nothing. macOS's own Mission Control swipe has to be off, or both open. `⌃↑` opens the switcher directly while Focus runs, standing in for Mission Control: parked windows sit in a corner, so Mission Control shows them small and scattered. macOS keeps `⌃↑` for Mission Control until it's switched off in Keyboard Shortcuts, and "Group windows by application" makes Mission Control itself readable again.
 
 How it works:
 - The leader is a `KeyboardShortcuts` hotkey, like the others.
 - Pressing it opens a non-activating key panel that takes keyboard focus, like the clipboard panel. The panel is invisible until the 500 ms guide delay.
 - The panel reads the next key, runs the command, closes and hands focus back to the window you were in. No event tap and no new permission.
-- For passthrough, Focus disables the hotkey, posts `⌃Space` with `CGEvent`, then re-enables it. The Carbon hotkey would otherwise catch the synthetic press.
+- For passthrough, Focus disables the hotkey, posts the leader keystroke with `CGEvent`, then re-enables it. The Carbon hotkey would otherwise catch the synthetic press.
 
 ### UI
 
 - **Menu bar:** the existing item gains the numbers of the sets that have windows, with the current one filled in. Clicking it opens the switcher.
-- **HUD:** shows when you switch sets, when a new window opens a new set, and after Replace. It shows the set number, name, apps and the occupied sets, then fades after 1.2 s. Built on the existing `HUD`.
+- **HUD:** doesn't show for plain set switches; the stage and the menu bar numbers already say where you are. It shows when a new window opens a new set because yours was full, when you send a window to another set, and after Replace. It shows the set number, name, apps and the occupied sets, then fades after 1.2 s. Built on the existing `HUD`.
 - **Shelf:** a strip of cards for the other sets at the left edge. It appears when the pointer rests at the edge for 150 ms or when the leader's key guide appears. Click a card to go there.
 - **Switcher:** a full-screen 3×3 grid in which each set's position matches its number.
-  - Typing filters by set name, app or window title.
-  - Arrows move the selection, `Return` goes, and `1`–`9` jump straight to a set. `Esc` clears the search, then closes.
-  - It opens on the previous set, so `⌃Space` `Space` `Return` works like ⌘Tab.
-- **Replace picker:** a search panel over the focused window. It lists windows in other sets, each with its set badge, then apps.
-  - Apps come from `/Applications`, `/System/Applications` and `~/Applications`, listed once, one folder level deep.
+  - No search. `h` `j` `k` `l` or the arrows move through the grid, stopping at its edges; the pointer selects too. `Return` goes, `1`–`9` jump straight to a set (empty ones included), `Esc` closes.
+  - Opening dims and blurs the stage and springs the grid in from 96%; closing eases out in 0.14 s.
+  - It opens on the previous set, so `⌃B` `Space` `Return` works like ⌘Tab.
+- **Replace picker:** sits over the window being replaced, which dims and gets an accent outline, with a card listing windows in other sets (each with its set badge), then running apps that have no window in any set. No search: `j` `k` or the arrows move, `Return` replaces, `Esc` cancels. An app that isn't running has to be opened the normal way; its window then follows the new-window rule.
 - **Panels:** all of them are non-activating `NSPanel`s, so focus stays in the app you were using, the same as the clipboard panel.
-- **Motion:** switching sets crossfades. Focus captures the display through ScreenCaptureKit, covers it with that still, moves the real windows underneath, then fades the still out over 0.2 s. With Reduce Motion on, or without Screen Recording, windows jump without animation.
+- **Motion:** switching sets slides like Spaces: higher set numbers come in from the right, lower ones from the left, and the menu bar stays put. Focus captures the stage below the menu bar and covers it with that still, moves the real windows underneath, then slides the still out while a picture of the new stage slides in over 0.38 s with explicit Core Animation animations. The new stage is built from captures of its own windows (parked ones capture fine) laid over the wallpaper at their target frames, not captured from the screen: right after the move the screen still shows the old windows, and that version left the old window lingering. The window list is fetched as soon as the leader is pressed, so the switch doesn't wait on it. The slide starts before any window moves: it runs in the window server, so the Accessibility calls that move windows (50–150 ms of blocking) can't stall it, and the windows settle under the cover while it plays. Window captures run in parallel. When a window is sent with `⌃B` `⇧N`, it isn't part of either sliding stage: it travels on its own from its old frame to its new one, above both, like a window dragged across Spaces.
+- **Memory:** about 30 MB at rest. Card thumbnails are kept at most 600 px wide; full-resolution captures live only for the length of a slide, and the wallpaper capture is cached at 1×. A crossfade was tried first; blending two apps in the same frame looked like one window being squeezed into another. If the second capture fails, the cover just fades. With Reduce Motion on, or without Screen Recording, windows jump without animation.
 
 ### Implementation
 
@@ -173,7 +176,7 @@ How it works:
   - Every park writes the window's last on-stage frame to `~/Library/Application Support/MacUtility/focus-state.json`.
   - When the app quits, or Focus is switched off, every parked window is brought back.
   - At launch, if the state file shows an unclean exit, every parked window is brought back before anything else runs.
-- **Thumbnails:** shelf and switcher cards use crops of the crossfade still, taken just before a set is parked. Capturing a parked window live isn't reliable. This reuses the Screen Recording permission from screen capture. Cards show app icons until a set has been switched away from once, and always without that permission.
+- **Thumbnails:** each time the switcher or shelf opens, every managed window is captured on its own through ScreenCaptureKit (`desktopIndependentWindow`), parked ones included, at up to 640 pt wide. Cards fill in as each capture lands. Crossfade stills are kept as a fallback. This reuses the Screen Recording permission from screen capture; without it, cards show app icons.
 - **Managed display:** the one with the menu bar, `NSScreen.screens[0]`. A window moved onto it with `⌃⌘←`/`→` follows the new-window rule. A window moved off it leaves its set.
 - **Stage Manager:** Focus reads `com.apple.WindowManager GloballyEnabled`. If Stage Manager is on, Focus won't start. It shows a sheet with a button that opens Desktop & Dock settings. It's on on this Mac right now.
 - **Spaces:** Focus assumes one Space per display. Windows on other Spaces aren't managed, and Settings recommends a single Space.

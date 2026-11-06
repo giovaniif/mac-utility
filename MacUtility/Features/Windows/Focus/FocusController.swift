@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import KeyboardShortcuts
 import Observation
 import os
 
@@ -17,6 +18,7 @@ struct SetSummary: Identifiable {
     let number: Int
     let windows: [WindowSummary]
     let isSplit: Bool
+    var ratio = 0.5
     var id: Int { number }
     var isEmpty: Bool { windows.isEmpty }
     var name: String { windows.first?.appName ?? "Set \(number)" }
@@ -56,11 +58,17 @@ final class FocusController {
     @ObservationIgnored private var focusMutedUntil = Date.distantPast
     @ObservationIgnored private var zoomed: WindowID?
     @ObservationIgnored private var pendingReplace: (target: WindowID, bundleID: String, until: Date, before: StageState)?
+    /// A split opened with the leader's v/s whose second pane is still empty:
+    /// the picker is up, or an app is opening the window that goes there.
+    @ObservationIgnored private var openSplit: SplitAxis?
+    @ObservationIgnored private var pendingSplit: (bundleID: String, until: Date)?
     @ObservationIgnored private var settleTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var adopting = false
     @ObservationIgnored private var tokens: [NSObjectProtocol] = []
     @ObservationIgnored private var appliedWidthCap = 0.0
+    @ObservationIgnored private var appliedGap = -1.0
+    @ObservationIgnored private var trackpadFingers = 0
 
     /// Never tiled: utility apps whose windows are fixed panels at heart.
     private static let floatingApps: Set<String> = [
@@ -76,6 +84,19 @@ final class FocusController {
         return stored > 0 ? stored : 1440
     }
 
+    /// Fingers for the switcher's trackpad swipe; 0 is off.
+    static var trackpadFingers: Int {
+        guard UserDefaults.standard.object(forKey: "focus.trackpadFingers") != nil else { return 3 }
+        let value = UserDefaults.standard.integer(forKey: "focus.trackpadFingers")
+        return [0, 3, 4].contains(value) ? value : 3
+    }
+
+    /// Space around and between windows on the stage, 0–40 pt.
+    static var gap: Double {
+        guard UserDefaults.standard.object(forKey: "focus.gap") != nil else { return 12 }
+        return min(max(UserDefaults.standard.double(forKey: "focus.gap"), 0), 40)
+    }
+
     init(permissions: Permissions) {
         self.permissions = permissions
         let center = NotificationCenter.default
@@ -88,7 +109,9 @@ final class FocusController {
         })
         tokens.append(center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { [weak self] in
-                guard let self, self.isRunning, Self.widthCap != self.appliedWidthCap else { return }
+                guard let self, self.isRunning else { return }
+                if Self.trackpadFingers != self.trackpadFingers { self.startTrackpad() }
+                guard Self.widthCap != self.appliedWidthCap || Self.gap != self.appliedGap else { return }
                 self.apply(focus: false)
             }
         })
@@ -134,6 +157,7 @@ final class FocusController {
         isRunning = true
         adoptAll()
         shelf.startWatchingPointer()
+        startTrackpad()
         apply(focus: true)
         log.notice("focus started with \(self.state.allWindows.count) windows")
     }
@@ -144,8 +168,16 @@ final class FocusController {
         leader.disarm()
         switcher.hide()
         replacer.hide()
+        // A half-open split gives its window the whole stage back first.
+        if openSplit != nil {
+            openSplit = nil
+            pendingSplit = nil
+            apply(focus: false)
+        }
         shelf.stopWatchingPointer()
         shelf.hide()
+        TrackpadSwipe.shared.stop()
+        trackpadFingers = 0
         let fallback = layout.single
         for id in state.allWindows where parked.contains(id) {
             guard let window = registry.windows[id], let size = window.frame?.size else { continue }
@@ -158,6 +190,23 @@ final class FocusController {
         zoomed = nil
         save(active: false)
         log.notice("focus stopped")
+    }
+
+    /// Swipe up opens the switcher, swipe down closes it, like Mission Control.
+    private func startTrackpad() {
+        trackpadFingers = Self.trackpadFingers
+        guard trackpadFingers > 0 else {
+            TrackpadSwipe.shared.stop()
+            return
+        }
+        TrackpadSwipe.shared.start(fingers: trackpadFingers) { [weak self] direction in
+            guard let self, self.isRunning else { return }
+            switch direction {
+            case .up where !self.switcher.isVisible: self.showSwitcher()
+            case .down where self.switcher.isVisible: self.switcher.hide()
+            default: break
+            }
+        }
     }
 
     /// First run, or windows that opened while Focus was off.
@@ -183,7 +232,7 @@ final class FocusController {
     private func ax(_ cocoa: CGRect) -> CGRect { ScreenGeometry.flip(cocoa, primaryHeight: primaryHeight) }
 
     var layout: StageLayout {
-        StageLayout(stage: ax(display?.visibleFrame ?? .zero), gap: 12, widthCap: CGFloat(Self.widthCap))
+        StageLayout(stage: ax(display?.visibleFrame ?? .zero), gap: CGFloat(Self.gap), widthCap: CGFloat(Self.widthCap))
     }
 
     private var displayRect: CGRect { ax(display?.frame ?? .zero) }
@@ -219,7 +268,8 @@ final class FocusController {
         guard isRunning else { return }
         let set = state.currentSet
         appliedWidthCap = Self.widthCap
-        let frames = layout.frames(for: set, zoomed: zoomed)
+        appliedGap = Self.gap
+        let frames = stageFrames()
         focusMutedUntil = Date().addingTimeInterval(0.5)
         for (id, rect) in frames { place(id, rect) }
         if focus {
@@ -234,6 +284,16 @@ final class FocusController {
         for id in state.allWindows where frames[id] == nil { park(id) }
         rememberSets()
         scheduleSave()
+    }
+
+    /// The current set's frames; while a split waits for its second window,
+    /// the one window keeps the first pane.
+    private func stageFrames() -> [WindowID: CGRect] {
+        let set = state.currentSet
+        if let axis = openSplit, set.windows.count == 1, let only = set.windows.first {
+            return [only: layout.split(ratio: set.ratio, axis: axis).0]
+        }
+        return layout.frames(for: set, zoomed: zoomed)
     }
 
     private func place(_ id: WindowID, _ rect: CGRect) {
@@ -261,15 +321,21 @@ final class FocusController {
         ownChangeUntil[id] = Date().addingTimeInterval(0.6)
     }
 
-    /// Switch sets with a short crossfade (skipped with Reduce Motion or no
-    /// Screen Recording). The snapshot also feeds the cards' thumbnails.
-    private func transition(_ change: @escaping () -> Void) {
-        let visible = layout.frames(for: state.currentSet, zoomed: zoomed)
+    /// Switch sets with a Spaces-style slide (skipped with Reduce Motion or
+    /// no Screen Recording). The snapshot also feeds the cards' thumbnails.
+    private func transition(to number: Int, carrying carried: [StageMotion.Carried] = [], _ change: @escaping () -> Void) {
+        let visible = stageFrames()
         guard let display else {
             change()
             return
         }
-        motion.crossfade(on: display, capturing: visible.mapValues(cocoa)) { [weak self] shots in
+        // Where the new set's windows will land, back to front.
+        let target = state[set: number]
+        let targetFrames = layout.frames(for: target)
+        let incoming = target.windows
+            .sorted { a, _ in a != target.focused }
+            .compactMap { id in targetFrames[id].map { (id: id, frame: cocoa($0)) } }
+        motion.slide(on: display, forward: number > state.current, outgoing: visible.mapValues(cocoa), incoming: incoming, carried: carried) { [weak self] shots in
             guard let self else { return }
             for (id, image) in shots { self.thumbnails[id] = image }
             change()
@@ -321,6 +387,16 @@ final class FocusController {
         guard !state.contains(id), !overflow.contains(id), let window = registry.windows[id],
               isManageable(window), isOnDisplay(window) else { return }
 
+        if let pending = pendingSplit, pending.bundleID == window.bundleID, Date() < pending.until, let axis = openSplit {
+            pendingSplit = nil
+            openSplit = nil
+            if state.pullInNew(id, axis: axis) {
+                apply()
+            } else {
+                add(id, preferred: nil, activate: true)
+            }
+            return
+        }
         if let pending = pendingReplace, pending.bundleID == window.bundleID, Date() < pending.until, state.contains(pending.target) {
             pendingReplace = nil
             let went = state.replace(pending.target, withNew: id)
@@ -341,9 +417,9 @@ final class FocusController {
             apply(focus: activate)
         case let .placed(number, switched, becauseFull):
             apply(focus: switched)
-            if switched {
-                let message = becauseFull ? "Set \(state.previous ?? number) already had two windows. ⌃Space ⇥ goes back." : nil
-                showHUD(for: number, message: message)
+            // Only worth a word when the window didn't land where you were.
+            if switched, becauseFull {
+                showHUD(for: number, message: "Set \(state.previous ?? number) already had two windows. \(KeyboardShortcuts.Name.focusLeaderLabel) ⇥ goes back.")
             }
         case .unmanaged:
             overflow.insert(id)
@@ -373,7 +449,6 @@ final class FocusController {
             // ⌘Tab or a Dock click on a parked window: the stage follows it.
             zoomed = nil
             apply(focus: false)
-            showHUD(for: state.current, message: nil)
         } else if state.currentSet.layout == .stacked {
             apply(focus: false)
         } else {
@@ -412,8 +487,8 @@ final class FocusController {
            let index = set.windows.firstIndex(of: id),
            let frame = registry.windows[id]?.frame,
            let expected = layout.frames(for: set)[id],
-           abs(frame.width - expected.width) > 2 {
-            state.setRatio(layout.ratio(forWidth: frame.width, isLeft: index == 0))
+           abs(frame.width - expected.width) > 2 || abs(frame.height - expected.height) > 2 {
+            state.setRatio(layout.ratio(for: frame.size, isFirst: index == 0, axis: set.axis))
         }
         apply(focus: false)
     }
@@ -422,16 +497,13 @@ final class FocusController {
 
     func goTo(_ number: Int) {
         guard isRunning, StageState.numbers.contains(number) else { return }
-        guard number != state.current else {
-            showHUD(for: number, message: nil)
-            return
-        }
-        transition { [weak self] in
+        guard number != state.current else { return }
+        transition(to: number) { [weak self] in
             guard let self else { return }
             self.zoomed = nil
             self.state.goTo(number)
+            // No card here: the stage itself and the menu bar numbers show where you are.
             self.apply()
-            self.showHUD(for: number, message: nil)
         }
     }
 
@@ -440,16 +512,131 @@ final class FocusController {
         goTo(previous)
     }
 
+    /// Leader ⇧1–9: the focused window moves to that set and you go with it.
     func send(to number: Int) {
-        guard isRunning, let id = focusedWindow(), number != state.current else { return }
-        let joining = state[set: number].hasRoom
+        guard isRunning, StageState.numbers.contains(number), number != state.current,
+              let id = focusedWindow() else { return }
+        let from = stageFrames()[id]
         state.send(id, to: number)
+        state[set: number].focused = id
+        zoomed = nil
+        openSplit = nil
+        // The window travels to its place in the new set while the sets slide.
+        let carried = from.flatMap { from in
+            layout.frames(for: state[set: number])[id].map { StageMotion.Carried(id: id, from: cocoa(from), to: cocoa($0)) }
+        }
+        transition(to: number, carrying: carried.map { [$0] } ?? []) { [weak self] in
+            guard let self else { return }
+            self.state.goTo(number)
+            self.apply()
+        }
+    }
+
+    // MARK: Splits, vim style
+
+    /// Leader v or s. One window: split now, with the picker in the empty
+    /// pane. Two: just turn the split that way.
+    func split(_ axis: SplitAxis) {
+        guard isRunning else { return }
+        let set = state.currentSet
+        zoomed = nil
+        if set.windows.count == 2 {
+            state.setAxis(axis)
+            apply()
+            return
+        }
+        guard let focused = set.focused ?? set.windows.first else {
+            HUD.show("Nothing to split")
+            return
+        }
+        shelf.hide()
+        state.currentSet.ratio = 0.5
+        openSplit = axis
+        pendingSplit = nil
+        apply(focus: false)
+        let (_, empty) = layout.split(ratio: 0.5, axis: axis)
+        replacer.showSplit(over: cocoa(empty), beside: summary(of: focused), axis: axis)
+    }
+
+    /// Esc in the picker: the window takes the whole stage again.
+    func cancelSplit() {
+        guard openSplit != nil else { return }
+        openSplit = nil
+        pendingSplit = nil
         apply()
-        showHUD(for: number, message: joining ? "Sent to set \(number)" : "Swapped into set \(number)")
+    }
+
+    func split(with other: WindowID) {
+        guard let axis = openSplit else { return }
+        openSplit = nil
+        state.pullIn(other, axis: axis)
+        apply()
+    }
+
+    /// A running app: its window in another set moves here, or it's asked for
+    /// a new window, which takes the empty pane when it shows up.
+    func split(withApp url: URL) {
+        guard openSplit != nil, let bundleID = Bundle(url: url)?.bundleIdentifier else { return }
+        let pids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map(\.processIdentifier))
+        if let other = state.allWindows.first(where: { id in
+            registry.windows[id].map { pids.contains($0.pid) } == true && !state.currentSet.windows.contains(id)
+        }) {
+            split(with: other)
+            return
+        }
+        pendingSplit = (bundleID, Date().addingTimeInterval(15))
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard let self, self.pendingSplit?.bundleID == bundleID else { return }
+            // No window came: give the stage back to the one that's there.
+            self.cancelSplit()
+        }
+    }
+
+    /// Leader o, like vim's Ctrl-w o: keep the focused window alone.
+    func only() {
+        guard isRunning, let other = state.currentSet.unfocused else { return }
+        let name = summary(of: other).appName
+        guard let went = state.only() else {
+            HUD.show("No free set for \(name)")
+            return
+        }
+        zoomed = nil
+        apply()
+        showHUD(for: went, message: "\(name) moved to set \(went)")
+    }
+
+    /// Leader h/j/k/l or arrows: the pane that way, like vim's Ctrl-w h/j/k/l.
+    func focusPane(_ direction: PaneDirection) {
+        guard isRunning else { return }
+        syncFocus()
+        if state.currentSet.layout == .stacked {
+            focusOther()
+            return
+        }
+        if state.focusPane(direction) {
+            zoomed = nil
+            apply()
+        } else if let focused = state.currentSet.focused, registry.frontmostFocusedWindow() != focused {
+            // Already that pane in our books, but not on screen: give it focus.
+            registry.raise(focused)
+        }
+    }
+
+    /// Our record of the focused pane can drift from the real one (focus
+    /// events are ignored for a moment after Focus moves windows), so take
+    /// the real one before acting on it.
+    private func syncFocus() {
+        guard let actual = registry.frontmostFocusedWindow(), state.currentSet.windows.contains(actual) else { return }
+        state.currentSet.focused = actual
     }
 
     func focusOther() {
         guard isRunning, state.currentSet.windows.count == 2 else { return }
+        syncFocus()
         state.focusOther()
         zoomed = nil
         apply()
@@ -549,11 +736,26 @@ final class FocusController {
 
     func armLeader() {
         guard isRunning else { return }
+        motion.prefetch()
         leader.arm()
+    }
+
+    /// Fresh thumbnails of every managed window, parked ones included.
+    private func refreshThumbnails() {
+        motion.snapshots(of: state.allWindows) { [weak self] id, image in
+            self?.thumbnails[id] = image
+        }
     }
 
     func showSwitcher() {
         guard isRunning, let display else { return }
+        refreshThumbnails()
+        leader.disarm()
+        // Same key again closes it, like Mission Control.
+        if switcher.isVisible {
+            switcher.hide()
+            return
+        }
         shelf.hide()
         switcher.show(on: display)
     }
@@ -570,6 +772,7 @@ final class FocusController {
 
     func showShelf() {
         guard isRunning, let display else { return }
+        refreshThumbnails()
         shelf.show(on: display)
     }
 
@@ -593,7 +796,8 @@ final class FocusController {
         return SetSummary(
             number: number,
             windows: set.windows.map(summary(of:)),
-            isSplit: set.windows.count == 2 && set.layout == .split
+            isSplit: set.windows.count == 2 && set.layout == .split,
+            ratio: set.ratio
         )
     }
 

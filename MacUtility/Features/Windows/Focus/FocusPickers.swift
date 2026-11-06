@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import Observation
 import SwiftUI
 
@@ -7,22 +8,20 @@ import SwiftUI
 @MainActor
 @Observable
 final class SwitcherModel {
-    var query = ""
     var selection = 1
+    /// Drives the open and close motion; the panel itself stays opaque.
+    var isPresented = false
 
-    /// Sets with windows that match the search, in number order.
-    func matches(_ sets: [SetSummary]) -> [Int] {
-        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return sets.filter { set in
-            guard !set.isEmpty else { return false }
-            guard !query.isEmpty else { return true }
-            let haystack = ([set.name] + set.windows.map { "\($0.appName) \($0.title)" }).joined(separator: " ").lowercased()
-            return haystack.contains(query)
-        }.map(\.number)
+    /// Moves within the 3×3 grid, stopping at its edges.
+    func move(columns: Int, rows: Int) {
+        let row = (selection - 1) / 3 + rows
+        let column = (selection - 1) % 3 + columns
+        guard (0..<3).contains(row), (0..<3).contains(column) else { return }
+        selection = row * 3 + column + 1
     }
 }
 
-/// ⌃Space Space: every set in a 3×3 grid whose positions match the numbers.
+/// Leader, Space: every set in a 3×3 grid whose positions match the numbers.
 @MainActor
 final class SwitcherPanel: NSObject, NSWindowDelegate {
     private unowned let controller: FocusController
@@ -41,23 +40,38 @@ final class SwitcherPanel: NSObject, NSWindowDelegate {
         })
     }
 
+    var isVisible: Bool { panel.isVisible && model.isPresented }
+    private var hideTask: Task<Void, Never>?
+
     func show(on screen: NSScreen) {
-        model.query = ""
+        hideTask?.cancel()
         let occupied = controller.state.occupied
-        // Opens on the previous set, so ⌃Space Space Return works like ⌘Tab.
+        // Opens on the previous set, so leader, Space, Return works like ⌘Tab.
         if let previous = controller.state.previous, occupied.contains(previous) {
             model.selection = previous
         } else {
             model.selection = controller.state.current
         }
         panel.setFrame(screen.frame, display: true)
-        panel.fadeIn(duration: 0.18, makeKey: true)
-        keys.start { [weak self] code, flags, _ in self?.handle(code, flags) ?? false }
+        panel.alphaValue = 1
+        panel.makeKeyAndOrderFront(nil)
+        // One frame at rest first, so SwiftUI has a "from" state to animate.
+        Task { @MainActor [model] in
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { model.isPresented = true }
+        }
+        keys.start { [weak self] code, flags, chars in self?.handle(code, flags, chars) ?? false }
     }
 
     func hide() {
         keys.stop()
-        panel.fadeOut()
+        guard model.isPresented else { return }
+        withAnimation(.easeIn(duration: 0.14)) { model.isPresented = false }
+        hideTask?.cancel()
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, let self, !self.model.isPresented else { return }
+            self.panel.orderOut(nil)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -65,33 +79,33 @@ final class SwitcherPanel: NSObject, NSWindowDelegate {
     }
 
     private func choose(_ number: Int) {
-        guard !controller.state[set: number].isEmpty || number == controller.state.current else { return }
         hide()
         controller.goTo(number)
     }
 
-    private func handle(_ code: UInt16, _ flags: NSEvent.ModifierFlags) -> Bool {
-        let matches = model.matches(controller.summaries)
-        let selected = matches.contains(model.selection) ? model.selection : matches.first
-        if model.query.isEmpty, flags.isDisjoint(with: [.command, .control, .option]), let number = KeyCode.digit(code) {
+    /// hjkl or arrows move, Return goes, 1–9 jump, esc closes. Every other
+    /// key is swallowed: there's nothing to type into.
+    private func handle(_ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> Bool {
+        guard flags.isDisjoint(with: [.command, .control, .option]) else { return false }
+        if let number = KeyCode.digit(code) {
             choose(number)
             return true
         }
         switch code {
-        case KeyCode.escape:
-            if model.query.isEmpty { hide() } else { model.query = "" }
-        case KeyCode.returnKey, KeyCode.enter:
-            if let selected { choose(selected) }
-        case KeyCode.left, KeyCode.right:
-            guard !matches.isEmpty else { return true }
-            let index = selected.flatMap { matches.firstIndex(of: $0) } ?? 0
-            let step = code == KeyCode.right ? 1 : -1
-            model.selection = matches[(index + step + matches.count) % matches.count]
-        case KeyCode.up, KeyCode.down:
-            let target = (selected ?? 1) + (code == KeyCode.down ? 3 : -3)
-            if matches.contains(target) { model.selection = target }
+        case KeyCode.escape: hide()
+        case KeyCode.returnKey, KeyCode.enter: choose(model.selection)
+        case KeyCode.left: model.move(columns: -1, rows: 0)
+        case KeyCode.right: model.move(columns: 1, rows: 0)
+        case KeyCode.up: model.move(columns: 0, rows: -1)
+        case KeyCode.down: model.move(columns: 0, rows: 1)
         default:
-            return false
+            switch chars.lowercased() {
+            case "h": model.move(columns: -1, rows: 0)
+            case "l": model.move(columns: 1, rows: 0)
+            case "k": model.move(columns: 0, rows: -1)
+            case "j": model.move(columns: 0, rows: 1)
+            default: break
+            }
         }
         return true
     }
@@ -102,87 +116,120 @@ private struct SwitcherView: View {
     let controller: FocusController
     let choose: (Int) -> Void
     let dismiss: () -> Void
-    @FocusState private var searchFocused: Bool
+
+    private let cardWidth: CGFloat = 288
+    private let spacing: CGFloat = 20
 
     var body: some View {
         let sets = controller.summaries
-        let matches = model.matches(sets)
-        let selected = matches.contains(model.selection) ? model.selection : matches.first
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            Color.black.opacity(0.35)
+            // Backdrop: the stage blurred and dimmed, like Mission Control.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.42))
+                .opacity(model.isPresented ? 1 : 0)
                 .onTapGesture(perform: dismiss)
-            VStack(spacing: 28) {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                    TextField("Search sets and windows", text: $model.query)
-                        .textFieldStyle(.plain)
-                        .font(.title3)
-                        .focused($searchFocused)
-                }
-                .padding(.horizontal, 16)
-                .frame(width: 560, height: 46)
-                .background(Color.white.opacity(0.14), in: RoundedRectangle(cornerRadius: 12))
 
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(300), spacing: 24), count: 3), spacing: 24) {
+            VStack(spacing: 24) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(cardWidth), spacing: spacing), count: 3), spacing: spacing) {
                     ForEach(sets) { set in
                         SwitcherCard(
                             set: set,
                             thumbnails: controller.thumbnails,
-                            query: model.query,
-                            isSelected: set.number == selected,
+                            isSelected: set.number == model.selection,
                             isCurrent: set.number == controller.state.current,
-                            dimmed: !matches.contains(set.number) && !(set.isEmpty && model.query.isEmpty),
                             pins: controller.pins,
                             togglePin: { bundleID in controller.togglePin(bundleID, to: set.number) }
                         )
                         .onTapGesture { choose(set.number) }
+                        .onHover { if $0 { model.selection = set.number } }
                     }
                 }
 
-                Text("Type to filter  ·  arrows to move  ·  Return to go  ·  1–9 to jump  ·  esc to close")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 14) {
+                    KeyHint(keys: "h j k l", label: "Move")
+                    KeyHint(keys: "↩", label: "Go")
+                    KeyHint(keys: "1–9", label: "Jump")
+                    KeyHint(keys: "esc", label: "Close")
+                }
             }
+            .scaleEffect(model.isPresented ? 1 : 0.96)
+            .opacity(model.isPresented ? 1 : 0)
         }
         .environment(\.colorScheme, .dark)
-        .onAppear { searchFocused = true }
+    }
+}
+
+private struct KeyHint: View {
+    let keys: String
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(keys)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(label).font(.caption)
+        }
+        .foregroundStyle(.secondary)
     }
 }
 
 private struct SwitcherCard: View {
     let set: SetSummary
     let thumbnails: [WindowID: NSImage]
-    let query: String
     let isSelected: Bool
     let isCurrent: Bool
-    let dimmed: Bool
     let pins: [String: Int]
     let togglePin: (String) -> Void
+    private let radius: CGFloat = 14
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SetPreview(set: set, thumbnails: thumbnails)
-                .frame(height: 140)
-            HStack(spacing: 10) {
-                SetBadge(number: set.number)
-                Text(set.name).font(.headline).lineLimit(1)
-                Spacer()
-                if isCurrent { Text("Current").font(.caption).foregroundStyle(.secondary) }
+        VStack(alignment: .leading, spacing: 9) {
+            SetPreview(set: set, thumbnails: thumbnails, cornerRadius: 8)
+            HStack(spacing: 8) {
+                SetBadge(number: set.number, size: 20)
+                    .opacity(set.isEmpty ? 0.5 : 1)
+                if !set.isEmpty {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(set.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                Spacer(minLength: 4)
+                if isCurrent {
+                    Text("Current")
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
             }
-            Text(subtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            .frame(height: 30)
         }
-        .padding(12)
-        .background(Color.white.opacity(isSelected ? 0.18 : 0.07), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(isSelected ? Color.accentColor : Color.white.opacity(0.15), lineWidth: isSelected ? 2 : 0.5)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(.white.opacity(isSelected ? 0.16 : set.isEmpty ? 0.025 : 0.06))
         )
-        .opacity(dimmed ? 0.3 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor : .white.opacity(0.08), lineWidth: isSelected ? 2.5 : 1)
+        )
+        .scaleEffect(isSelected ? 1.02 : 1)
+        .opacity(set.isEmpty && !isSelected ? 0.6 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isSelected)
+        .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .contextMenu {
             ForEach(set.windows) { window in
                 if let bundleID = window.bundleID {
@@ -193,160 +240,172 @@ private struct SwitcherCard: View {
             }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(set.isEmpty ? "Set \(set.number), empty" : "Set \(set.number), \(set.apps)")
         .accessibilityAddTraits(.isButton)
     }
 
-    private var subtitle: String {
-        if set.isEmpty { return "⌃Space ⇧\(set.number) sends a window here" }
-        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
-        if !query.isEmpty, let hit = set.windows.first(where: { "\($0.appName) \($0.title)".lowercased().contains(query) }) {
-            return hit.title.isEmpty ? hit.appName : "\(hit.appName) — \(hit.title)"
-        }
-        return set.apps
+    /// What the name doesn't already say: the second app, or the window's title.
+    private var subtitle: String? {
+        if set.windows.count == 2 { return set.apps }
+        let title = set.windows.first?.title ?? ""
+        return title.isEmpty || title == set.name ? nil : title
     }
 }
 
 // MARK: - Replace
-
-/// An installed app, for "Open an app here".
-struct InstalledApp: Identifiable, Sendable {
-    let name: String
-    let url: URL
-    var id: URL { url }
-
-    /// /Applications, /System/Applications and ~/Applications, one level of
-    /// subfolders deep (Utilities and the like). Read once, off the main thread.
-    static func scan() async -> [InstalledApp] {
-        await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            let roots = ["/Applications", "/System/Applications", NSHomeDirectory() + "/Applications"].map(URL.init(fileURLWithPath:))
-            var apps: [String: InstalledApp] = [:]
-            func add(_ url: URL) {
-                let name = url.deletingPathExtension().lastPathComponent
-                if apps[name] == nil { apps[name] = InstalledApp(name: name, url: url) }
-            }
-            for root in roots {
-                for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
-                    if url.pathExtension == "app" {
-                        add(url)
-                    } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                        for inner in (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] where inner.pathExtension == "app" {
-                            add(inner)
-                        }
-                    }
-                }
-            }
-            return apps.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        }.value
-    }
-}
 
 @MainActor
 @Observable
 final class ReplaceModel {
     enum Item: Identifiable {
         case window(WindowSummary, set: Int)
-        case app(InstalledApp)
+        case app(name: String, url: URL, icon: NSImage?)
 
         var id: String {
             switch self {
             case let .window(window, _): "w\(window.id)"
-            case let .app(app): app.url.path
+            case let .app(_, url, _): url.path
             }
         }
     }
 
-    var query = ""
-    var selection = 0
-    var replacing = "window"
-    var windows: [(WindowSummary, Int)] = []
-    var apps: [InstalledApp] = []
+    enum Mode: Equatable {
+        case replace
+        case split(SplitAxis)
+    }
 
-    var items: [Item] {
-        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let windowItems = windows
-            .filter { query.isEmpty || "\($0.0.appName) \($0.0.title)".lowercased().contains(query) }
-            .map { Item.window($0.0, set: $0.1) }
-        let running = Set(windows.compactMap(\.0.bundleID))
-        let appItems = apps
-            .filter { query.isEmpty ? false : $0.name.lowercased().contains(query) }
-            .filter { Bundle(url: $0.url)?.bundleIdentifier.map { !running.contains($0) } ?? true }
-            .prefix(8)
-            .map { Item.app($0) }
-        return windowItems + appItems
+    var mode = Mode.replace
+    var selection = 0
+    /// The window being replaced, or the one the new pane opens beside.
+    var replacing: WindowSummary?
+    var items: [Item] = []
+    /// Drives the open and close motion; the panel itself stays opaque.
+    var isPresented = false
+
+    func move(_ step: Int) {
+        guard !items.isEmpty else { return }
+        selection = min(max(selection + step, 0), items.count - 1)
     }
 }
 
-/// ⌃Space R: put another set's window, or a new app, where the focused one is.
+/// Leader, R: put another set's window, or a running app, where the focused
+/// window is. Sits over that window, which dims behind it. Leader v/s reuse
+/// it in the empty pane of a fresh split.
 @MainActor
 final class ReplacePanel: NSObject, NSWindowDelegate {
     private unowned let controller: FocusController
     private let panel = FocusKeyPanel.make()
     private let model = ReplaceModel()
     private let keys = KeyMonitor()
-    private var loadedApps = false
+    private var hideTask: Task<Void, Never>?
 
     init(controller: FocusController) {
         self.controller = controller
         super.init()
         panel.delegate = self
-        panel.contentView = NSView.hosting(ReplaceView(model: model) { [weak self] item in self?.choose(item) })
+        panel.contentView = NSView.hosting(ReplaceView(model: model) { [weak self] item in
+            self?.choose(item)
+        } dismiss: { [weak self] in
+            self?.cancel()
+        })
     }
 
     func show(over slot: CGRect, replacing window: WindowSummary) {
-        model.query = ""
+        model.mode = .replace
+        present(over: slot, window: window)
+    }
+
+    /// The empty pane of a split that just opened.
+    func showSplit(over pane: CGRect, beside window: WindowSummary, axis: SplitAxis) {
+        model.mode = .split(axis)
+        present(over: pane, window: window)
+    }
+
+    private func present(over slot: CGRect, window: WindowSummary) {
+        hideTask?.cancel()
         model.selection = 0
-        model.replacing = window.appName
-        model.windows = StageState.numbers
-            .filter { $0 != controller.state.current }
-            .flatMap { number in controller.state[set: number].windows.map { (controller.summary(of: $0), number) } }
-        if !loadedApps {
-            loadedApps = true
-            Task { [weak self] in
-                let apps = await InstalledApp.scan()
-                self?.model.apps = apps
-            }
+        model.replacing = window
+        model.items = items()
+        panel.setFrame(slot, display: true)
+        panel.alphaValue = 1
+        panel.makeKeyAndOrderFront(nil)
+        Task { @MainActor [model] in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { model.isPresented = true }
         }
-        let size = CGSize(width: 500, height: 460)
-        let screen = NSScreen.screens.first?.visibleFrame ?? slot
-        var origin = CGPoint(x: slot.midX - size.width / 2, y: slot.maxY - 120 - size.height)
-        origin.x = min(max(origin.x, screen.minX + 12), screen.maxX - size.width - 12)
-        origin.y = min(max(origin.y, screen.minY + 12), screen.maxY - size.height - 12)
-        panel.setFrame(CGRect(origin: origin, size: size), display: true)
-        panel.fadeIn(duration: 0.15, rise: 8, makeKey: true)
-        keys.start { [weak self] code, _, _ in self?.handle(code) ?? false }
+        keys.start { [weak self] code, flags, chars in self?.handle(code, flags, chars) ?? false }
     }
 
     func hide() {
         keys.stop()
-        panel.fadeOut()
+        guard model.isPresented else { return }
+        withAnimation(.easeIn(duration: 0.14)) { model.isPresented = false }
+        hideTask?.cancel()
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, let self, !self.model.isPresented else { return }
+            self.panel.orderOut(nil)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        cancel()
+    }
+
+    /// Closed without choosing: a split gives its pane back.
+    private func cancel() {
+        let wasOpen = model.isPresented
         hide()
+        if wasOpen, case .split = model.mode { controller.cancelSplit() }
+    }
+
+    /// Windows parked in other sets, then running apps with no window in any
+    /// set (choosing one opens a window for it here).
+    private func items() -> [ReplaceModel.Item] {
+        let state = controller.state
+        let windows = StageState.numbers
+            .filter { $0 != state.current }
+            .flatMap { number in state[set: number].windows.map { ReplaceModel.Item.window(controller.summary(of: $0), set: number) } }
+        let managedPIDs = Set(state.allWindows.compactMap { controller.registry.windows[$0]?.pid })
+        let own = ProcessInfo.processInfo.processIdentifier
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.processIdentifier != own && !managedPIDs.contains($0.processIdentifier) }
+            .compactMap { app -> ReplaceModel.Item? in
+                guard let url = app.bundleURL else { return nil }
+                return .app(name: app.localizedName ?? url.deletingPathExtension().lastPathComponent, url: url, icon: app.icon)
+            }
+            .sorted { a, b in
+                guard case let .app(nameA, _, _) = a, case let .app(nameB, _, _) = b else { return false }
+                return nameA.localizedCaseInsensitiveCompare(nameB) == .orderedAscending
+            }
+        return windows + apps
     }
 
     private func choose(_ item: ReplaceModel.Item) {
         hide()
-        switch item {
-        case let .window(window, _): controller.replace(with: window.id)
-        case let .app(app): controller.replace(withApp: app.url)
+        switch (model.mode, item) {
+        case let (.replace, .window(window, _)): controller.replace(with: window.id)
+        case let (.replace, .app(_, url, _)): controller.replace(withApp: url)
+        case let (.split, .window(window, _)): controller.split(with: window.id)
+        case let (.split, .app(_, url, _)): controller.split(withApp: url)
         }
     }
 
-    private func handle(_ code: UInt16) -> Bool {
-        let items = model.items
+    /// j/k or arrows move, Return replaces, esc cancels. Everything else is
+    /// swallowed: there's nothing to type into.
+    private func handle(_ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> Bool {
+        guard flags.isDisjoint(with: [.command, .control, .option]) else { return false }
         switch code {
-        case KeyCode.escape:
-            if model.query.isEmpty { hide() } else { model.query = "" }
-        case KeyCode.down:
-            model.selection = min(model.selection + 1, max(items.count - 1, 0))
-        case KeyCode.up:
-            model.selection = max(model.selection - 1, 0)
+        case KeyCode.escape: cancel()
+        case KeyCode.down: model.move(1)
+        case KeyCode.up: model.move(-1)
         case KeyCode.returnKey, KeyCode.enter:
-            if items.indices.contains(model.selection) { choose(items[model.selection]) }
+            if model.items.indices.contains(model.selection) { choose(model.items[model.selection]) }
         default:
-            return false
+            switch chars.lowercased() {
+            case "j": model.move(1)
+            case "k": model.move(-1)
+            default: break
+            }
         }
         return true
     }
@@ -355,95 +414,180 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
 private struct ReplaceView: View {
     @Bindable var model: ReplaceModel
     let choose: (ReplaceModel.Item) -> Void
-    @FocusState private var searchFocused: Bool
+    let dismiss: () -> Void
 
     var body: some View {
-        let items = model.items
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Replace \(model.replacing) with…", text: $model.query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .focused($searchFocused)
-                    .onChange(of: model.query) { model.selection = 0 }
+        GeometryReader { proxy in
+            ZStack {
+                // Replace: the window, dimmed and outlined in place.
+                // Split: the new, empty pane.
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSplit ? Color.accentColor.opacity(0.12) : Color.black.opacity(0.5))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: isSplit ? 2 : 3, dash: isSplit ? [8, 6] : []))
+                    )
+                    .background(isSplit ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .opacity(model.isPresented ? 1 : 0)
+                    .onTapGesture(perform: dismiss)
+
+                card
+                    .frame(width: min(440, proxy.size.width - 48))
+                    .frame(maxHeight: min(560, proxy.size.height - 80))
+                    .scaleEffect(model.isPresented ? 1 : 0.96)
+                    .opacity(model.isPresented ? 1 : 0)
             }
-            .padding(.horizontal, 16)
-            .frame(height: 52)
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    if items.isEmpty {
-                        Text(model.query.isEmpty ? "No windows in other sets. Type an app name." : "No window or app matches.")
-                            .foregroundStyle(.secondary)
-                            .padding(10)
-                    }
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        if index == 0, case .window = item { header("Windows in other sets") }
-                        if case .app = item, index == 0 || isWindow(items[index - 1]) { header("Open an app here") }
-                        row(item, selected: index == model.selection)
-                            .onTapGesture { choose(item) }
-                    }
-                }
-                .padding(8)
-            }
-            Divider()
-            Text("Return to replace  ·  \(model.replacing) goes where the new window came from  ·  esc to cancel")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.primary.opacity(0.12)))
-        .onAppear { searchFocused = true }
+        .environment(\.colorScheme, .dark)
     }
 
-    private func isWindow(_ item: ReplaceModel.Item) -> Bool {
-        if case .window = item { return true }
+    private var isSplit: Bool {
+        if case .split = model.mode { return true }
         return false
     }
 
-    private func header(_ text: String) -> some View {
+    private var heading: String {
+        let name = model.replacing?.appName ?? "window"
+        switch model.mode {
+        case .replace: return "Replace \(name)"
+        case .split(.vertical): return "Open beside \(name)"
+        case .split(.horizontal): return "Open below \(name)"
+        }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                icon(model.replacing?.icon, size: 32)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(heading)
+                        .font(.system(size: 15, weight: .semibold))
+                    if let title = model.replacing?.title, !title.isEmpty, title != model.replacing?.appName {
+                        Text(title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            Divider().opacity(0.5)
+
+            if model.items.isEmpty {
+                Text("No windows in other sets, and every running app already has one.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(16)
+            } else {
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
+                                if let title = header(at: index) { sectionTitle(title) }
+                                row(item, selected: index == model.selection)
+                                    .id(item.id)
+                                    .onTapGesture { choose(item) }
+                                    .onHover { if $0 { model.selection = index } }
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .onChange(of: model.selection) { _, selection in
+                        guard model.items.indices.contains(selection) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) { scroll.scrollTo(model.items[selection].id) }
+                    }
+                }
+            }
+
+            Divider().opacity(0.5)
+
+            HStack(spacing: 14) {
+                hint("j k", "Move")
+                hint("↩", isSplit ? "Open here" : "Replace")
+                hint("esc", "Cancel")
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        // Near-solid: a material in a panel of an inactive app renders
+        // translucent, and the window underneath bled through it.
+        .background(Color(white: 0.13).opacity(0.97), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.1)))
+        .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
+    }
+
+    private func header(at index: Int) -> String? {
+        let item = model.items[index]
+        let previous = index > 0 ? model.items[index - 1] : nil
+        switch (item, previous) {
+        case (.window, nil): return "Windows in other sets"
+        case (.app, nil), (.app, .window?): return "Open apps"
+        default: return nil
+        }
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
         Text(text)
-            .font(.caption.weight(.semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
             .padding(.top, 8)
             .padding(.bottom, 4)
     }
 
-    @ViewBuilder private func row(_ item: ReplaceModel.Item, selected: Bool) -> some View {
+    private func row(_ item: ReplaceModel.Item, selected: Bool) -> some View {
         HStack(spacing: 10) {
             switch item {
             case let .window(window, number):
-                icon(window.icon)
-                Text(window.appName).fontWeight(.semibold)
-                Text(window.title).foregroundStyle(selected ? Color.white.opacity(0.85) : Color.secondary).lineLimit(1)
-                Spacer()
-                Text("Set \(number)")
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
-            case let .app(app):
-                icon(NSWorkspace.shared.icon(forFile: app.url.path))
-                Text(app.name).fontWeight(.semibold)
-                Spacer()
+                icon(window.icon, size: 24)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(window.appName).font(.system(size: 13, weight: .semibold))
+                    if !window.title.isEmpty, window.title != window.appName {
+                        Text(window.title)
+                            .font(.system(size: 11))
+                            .foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 8)
+                SetBadge(number: number, size: 18)
+            case let .app(name, _, image):
+                icon(image, size: 24)
+                Text(name).font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 8)
+                Text("New window").font(.system(size: 11)).foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
             }
         }
         .padding(.horizontal, 10)
-        .frame(height: 40)
-        .background(selected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .frame(height: 42)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(selected ? Color.accentColor : Color.clear)
+        )
         .foregroundStyle(selected ? Color.white : Color.primary)
         .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.1), value: selected)
     }
 
-    private func icon(_ image: NSImage?) -> some View {
-        Group {
-            if let image { Image(nsImage: image).resizable() } else { Color.secondary.opacity(0.2) }
+    private func hint(_ keys: String, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            Text(keys)
+                .font(.caption2.weight(.semibold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            Text(label).font(.caption)
         }
-        .frame(width: 24, height: 24)
+        .foregroundStyle(.secondary)
+    }
+
+    private func icon(_ image: NSImage?, size: CGFloat) -> some View {
+        Group {
+            if let image { Image(nsImage: image).resizable() } else { RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.1)) }
+        }
+        .frame(width: size, height: size)
     }
 }
 
@@ -457,6 +601,8 @@ final class ShelfPanel {
     private let panel: NSPanel
     private var pointerMonitor: Any?
     private var revealTask: Task<Void, Never>?
+    private var hideTask: Task<Void, Never>?
+    private let presence = Presence()
 
     init(controller: FocusController) {
         self.controller = controller
@@ -470,7 +616,9 @@ final class ShelfPanel {
             hide()
             return
         }
-        let hosting = NSHostingView(rootView: ShelfView(sets: sets, thumbnails: controller.thumbnails) { [weak self] number in
+        hideTask?.cancel()
+        let wasShowing = panel.isVisible && presence.isPresented
+        let hosting = NSHostingView(rootView: ShelfView(sets: sets, controller: controller, presence: presence) { [weak self] number in
             self?.hide()
             self?.controller.goTo(number)
         })
@@ -478,13 +626,27 @@ final class ShelfPanel {
         hosting.frame.size = size
         panel.contentView = NSView.container(for: hosting)
         let visible = screen.visibleFrame
-        panel.setFrame(CGRect(x: visible.minX + 10, y: visible.midY - size.height / 2, width: size.width, height: size.height), display: true)
-        panel.fadeIn(duration: 0.15)
+        // Flush with the screen edge, so the strip slides in from off screen.
+        panel.setFrame(CGRect(x: screen.frame.minX, y: visible.midY - size.height / 2, width: size.width, height: size.height), display: true)
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
+        guard !wasShowing else { return }
+        presence.isPresented = false
+        Task { @MainActor [presence] in
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) { presence.isPresented = true }
+        }
     }
 
     func hide() {
         revealTask?.cancel()
-        panel.fadeOut()
+        guard panel.isVisible, presence.isPresented else { return }
+        withAnimation(.easeIn(duration: 0.16)) { presence.isPresented = false }
+        hideTask?.cancel()
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, let self, !self.presence.isPresented else { return }
+            self.panel.orderOut(nil)
+        }
     }
 
     func startWatchingPointer() {
@@ -502,7 +664,7 @@ final class ShelfPanel {
 
     private func pointerMoved(to location: CGPoint) {
         guard let screen = NSScreen.screens.first else { return }
-        if panel.isVisible {
+        if panel.isVisible, presence.isPresented {
             if !panel.frame.insetBy(dx: -40, dy: -40).contains(location) { hide() }
             return
         }
@@ -524,16 +686,20 @@ final class ShelfPanel {
 
 private struct ShelfView: View {
     let sets: [SetSummary]
-    let thumbnails: [WindowID: NSImage]
+    let controller: FocusController
+    let presence: Presence
     let choose: (Int) -> Void
+
+    // Read through the controller so cards update as fresh captures land.
+    private var thumbnails: [WindowID: NSImage] { controller.thumbnails }
 
     var body: some View {
         VStack(spacing: 10) {
             ForEach(sets) { set in
                 Button { choose(set.number) } label: {
                     VStack(alignment: .leading, spacing: 6) {
-                        SetPreview(set: set, thumbnails: thumbnails)
-                            .frame(width: 140, height: 80)
+                        SetPreview(set: set, thumbnails: thumbnails, cornerRadius: 7)
+                            .frame(width: 140)
                         HStack(spacing: 8) {
                             SetBadge(number: set.number, size: 20)
                             Text(set.name).font(.callout.weight(.semibold)).lineLimit(1)
@@ -547,13 +713,19 @@ private struct ShelfView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text("⌃Space Space for all sets")
+            Text("\(KeyboardShortcuts.Name.focusLeaderLabel) Space for all sets")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
         .padding(12)
         .frame(width: 176)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.primary.opacity(0.1)))
+        .background(.panelFill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.25), radius: 16, x: 4, y: 6)
+        .padding(.leading, 10)
+        .padding([.vertical, .trailing], 24)
+        // Slides in from the left edge.
+        .offset(x: presence.isPresented ? 0 : -220)
+        .opacity(presence.isPresented ? 1 : 0.6)
     }
 }

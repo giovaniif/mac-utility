@@ -118,10 +118,28 @@ private struct PermissionRow: View {
 private struct FocusSettings: View {
     let focus: FocusController
     @AppStorage("focus.widthCap") private var widthCap = 1440.0
+    @AppStorage("focus.gap") private var gap = 12.0
+    @AppStorage("focus.trackpadFingers") private var trackpadFingers = 3
 
     var body: some View {
         Section("Focus") {
             KeyboardShortcuts.Recorder("Leader key", name: .focusLeader)
+            VStack(alignment: .leading) {
+                KeyboardShortcuts.Recorder("Switcher", name: .focusSwitcher)
+                Text("Stands in for Mission Control, which can't show parked windows well. For ⌃↑ to reach Focus, turn off Mission Control's ⌃↑ in System Settings → Keyboard → Keyboard Shortcuts → Mission Control.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading) {
+                Picker("Trackpad swipe up", selection: $trackpadFingers) {
+                    Text("Off").tag(0)
+                    Text("Three fingers").tag(3)
+                    Text("Four fingers").tag(4)
+                }
+                Text(trackpadNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading) {
                 Slider(value: $widthCap, in: 960...2560, step: 40) {
                     Text("Single window width")
@@ -130,8 +148,16 @@ private struct FocusSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            VStack(alignment: .leading) {
+                Slider(value: $gap, in: 0...40, step: 2) {
+                    Text("Gap")
+                }
+                Text("\(Int(gap)) pt around the stage and between two windows.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if focus.pins.isEmpty {
-                Text("Pin an app to a set from the switcher (⌃Space Space), with a right-click on the set.")
+                Text("Pin an app to a set from the switcher (\(KeyboardShortcuts.Name.focusLeaderLabel) Space), with a right-click on the set.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
@@ -148,6 +174,15 @@ private struct FocusSettings: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var trackpadNote: String {
+        guard trackpadFingers > 0 else { return "Swiping does nothing in Focus." }
+        let key = trackpadFingers == 3 ? "TrackpadThreeFingerVertSwipeGesture" : "TrackpadFourFingerVertSwipeGesture"
+        let value = CFPreferencesCopyAppValue(key as CFString, "com.apple.AppleMultitouchTrackpad" as CFString) as? Int
+        let base = "Swipe up opens the switcher, swipe down closes it."
+        guard value == 2 else { return base }
+        return base + " macOS still uses this swipe for Mission Control, so both would open: turn off Mission Control in System Settings → Trackpad → More Gestures."
     }
 
     private func appName(_ bundleID: String) -> String {

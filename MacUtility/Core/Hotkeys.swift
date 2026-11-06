@@ -8,7 +8,9 @@ extension KeyboardShortcuts.Name {
     static let captureScreen = Self("captureScreen", default: .init(.three, modifiers: [.shift, .command]))
     static let recordScreen = Self("recordScreen", default: .init(.five, modifiers: [.shift, .command]))
     static let windowPreviousDisplay = Self("windowPreviousDisplay", default: .init(.leftArrow, modifiers: [.control, .command]))
-    static let focusLeader = Self("focusLeader", default: .init(.space, modifiers: [.control]))
+    static let focusLeader = Self("focusLeader", default: .init(.b, modifiers: [.control]))
+    /// Mission Control's own shortcut: Focus's switcher stands in for it.
+    static let focusSwitcher = Self("focusSwitcher", default: .init(.upArrow, modifiers: [.control]))
 }
 
 @MainActor
@@ -19,9 +21,18 @@ enum Hotkeys {
         KeyboardShortcuts.onKeyUp(for: .windowNextDisplay) { actions.moveWindow(.next) }
         KeyboardShortcuts.onKeyUp(for: .windowPreviousDisplay) { actions.moveWindow(.previous) }
         KeyboardShortcuts.onKeyDown(for: .focusLeader) { actions.focusLeader() }
+        KeyboardShortcuts.onKeyDown(for: .focusSwitcher) { actions.focusSwitcher() }
         KeyboardShortcuts.onKeyUp(for: .captureArea) { actions.captureArea() }
         KeyboardShortcuts.onKeyUp(for: .captureScreen) { actions.captureScreen() }
         KeyboardShortcuts.onKeyUp(for: .recordScreen) { actions.toggleRecording() }
         Feature.allCases.forEach { $0.applyHotkeys() }
+    }
+}
+
+extension KeyboardShortcuts.Name {
+    /// The leader as the user set it, e.g. "⌃B", for hints and the key guide.
+    @MainActor
+    static var focusLeaderLabel: String {
+        KeyboardShortcuts.getShortcut(for: .focusLeader)?.description ?? "⌃B"
     }
 }

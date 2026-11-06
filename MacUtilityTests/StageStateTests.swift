@@ -190,6 +190,61 @@ struct StageStateTests {
         #expect(StageState.snap(0.05) == 0.2)
     }
 
+    @Test func pullInSplitsBesideFocused() {
+        var state = StageState()
+        state.add(1)
+        state[set: 3].insert(30)
+        let from = state.pullIn(30, axis: .horizontal)
+        #expect(from == 3)
+        #expect(state[set: 1].windows == [1, 30])
+        #expect(state[set: 1].focused == 30)
+        #expect(state[set: 1].axis == .horizontal)
+        #expect(state[set: 3].isEmpty)
+    }
+
+    @Test func pullInNeedsRoom() {
+        var state = StageState()
+        state.add(1)
+        state.add(2)
+        state[set: 3].insert(30)
+        let from = state.pullIn(30, axis: .vertical)
+        #expect(from == nil)
+        #expect(state[set: 3].windows == [30])
+    }
+
+    @Test func onlyMovesTheOtherWindowOut() {
+        var state = StageState()
+        state.add(1)
+        state.add(2)
+        state.currentSet.focused = 1
+        let went = state.only()
+        #expect(went == 2)
+        #expect(state[set: 1].windows == [1])
+        #expect(state[set: 2].windows == [2])
+    }
+
+    @Test func paneFocusFollowsTheAxis() {
+        var state = StageState()
+        state.add(1)
+        state.add(2)
+        state.currentSet.focused = 1
+        let right = state.focusPane(.right)
+        #expect(right)
+        #expect(state.currentSet.focused == 2)
+        let down = state.focusPane(.down)
+        #expect(!down)
+        state.setAxis(.horizontal)
+        let up = state.focusPane(.up)
+        #expect(up)
+        #expect(state.currentSet.focused == 1)
+    }
+
+    @Test func oldSavedSetsDecodeAsSideBySide() throws {
+        let json = #"{"windows":[1,2],"focused":1,"layout":"split","ratio":0.5}"#
+        let set = try JSONDecoder().decode(FocusSet.self, from: Data(json.utf8))
+        #expect(set.axis == .vertical)
+    }
+
     @Test func roundTripsThroughJSON() throws {
         var state = StageState()
         state.add(1)
@@ -247,10 +302,23 @@ struct StageLayoutTests {
         #expect(desktop.frames(for: set, zoomed: 2) == [2: desktop.inner])
     }
 
+    @Test func horizontalSplitStacksTopAndBottom() {
+        var set = FocusSet()
+        set.insert(1)
+        set.insert(2)
+        set.axis = .horizontal
+        let frames = laptop.frames(for: set)
+        let top = try! #require(frames[1])
+        let bottom = try! #require(frames[2])
+        #expect(top.width == laptop.inner.width)
+        #expect(bottom.minY - top.maxY == 12)
+        #expect(bottom.maxY == laptop.inner.maxY)
+    }
+
     @Test func ratioFromResize() {
         let (left, _) = laptop.split(ratio: 0.5)
-        #expect(abs(laptop.ratio(forWidth: left.width, isLeft: true) - 0.5) < 0.01)
-        #expect(abs(laptop.ratio(forWidth: left.width, isLeft: false) - 0.5) < 0.01)
+        #expect(abs(laptop.ratio(for: left.size, isFirst: true) - 0.5) < 0.01)
+        #expect(abs(laptop.ratio(for: left.size, isFirst: false) - 0.5) < 0.01)
     }
 
     @Test func parkingAvoidsOtherDisplays() {

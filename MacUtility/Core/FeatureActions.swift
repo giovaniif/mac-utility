@@ -43,6 +43,11 @@ final class FeatureActions {
         focus.armLeader()
     }
 
+    func focusSwitcher() {
+        guard Feature.focus.isEnabled else { return }
+        focus.showSwitcher()
+    }
+
     func captureArea() {
         guard Feature.screenCapture.isEnabled else { return }
         screenCapture.captureArea()

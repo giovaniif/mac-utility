@@ -24,6 +24,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if UserDefaults.standard.bool(forKey: "testCaptureScreen") {
             actions.screenCapture.captureScreen()
         }
+        if UserDefaults.standard.bool(forKey: "testFocusSwitcher") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.showSwitcher()
+            }
+        }
+        if UserDefaults.standard.bool(forKey: "testFocusCycle") {
+            Task {
+                for number in [2, 3, 1, 4, 2] {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    actions.focus.goTo(number)
+                }
+            }
+        }
+        if UserDefaults.standard.integer(forKey: "testFocusSend") > 0 {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.goTo(1)
+                try? await Task.sleep(for: .seconds(1.5))
+                actions.focus.send(to: UserDefaults.standard.integer(forKey: "testFocusSend"))
+            }
+        }
+        if UserDefaults.standard.bool(forKey: "testFocusLeader") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.armLeader()
+            }
+        }
+        if UserDefaults.standard.bool(forKey: "testFocusSplit") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.split(.vertical)
+            }
+        }
+        if UserDefaults.standard.bool(forKey: "testFocusReplace") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.showReplace()
+            }
+        }
         #endif
         // Only on first launch; after that Settings shows the same rows.
         if !UserDefaults.standard.bool(forKey: "onboardingShown"), !permissions.allGranted {

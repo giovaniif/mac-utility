@@ -1,5 +1,6 @@
 import AppKit
 import KeyboardShortcuts
+import os
 import SwiftUI
 
 /// Borderless panel that takes key focus without activating Mac Utility, so
@@ -19,6 +20,21 @@ final class FocusKeyPanel: NSPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         return panel
     }
+}
+
+private let leaderLog = Logger(subsystem: "com.giovani.MacUtility", category: "focus")
+
+/// Drives a panel's SwiftUI enter and exit motion; the panel itself stays opaque.
+@MainActor
+@Observable
+final class Presence {
+    var isPresented = false
+}
+
+/// Near-solid panel fill. Materials in a panel of an inactive app (Focus never
+/// activates) render translucent, and windows behind bleed through.
+extension ShapeStyle where Self == Color {
+    static var panelFill: Color { Color(nsColor: .windowBackgroundColor).opacity(0.97) }
 }
 
 /// Local keyDown monitor whose handler decides whether to swallow the key.
@@ -62,7 +78,7 @@ enum KeyCode {
 
 // MARK: - Leader key
 
-/// ⌃Space, then one key. Invisible for 500 ms; after that a key guide
+/// The leader (⌃B by default), then one key. Invisible for 500 ms; after that a key guide
 /// appears, with the shelf.
 @MainActor
 final class LeaderKey: NSObject, NSWindowDelegate {
@@ -71,6 +87,8 @@ final class LeaderKey: NSObject, NSWindowDelegate {
     private let keys = KeyMonitor()
     private var guideTask: Task<Void, Never>?
     private var repeatTask: Task<Void, Never>?
+    private var hideTask: Task<Void, Never>?
+    private let guide = Presence()
     private(set) var isArmed = false
 
     init(controller: FocusController) {
@@ -80,14 +98,17 @@ final class LeaderKey: NSObject, NSWindowDelegate {
     }
 
     func arm() {
-        // Leader twice: hand ⌃Space to the app, like tmux's prefix-prefix.
+        // Leader twice: hand the leader to the app, like tmux's prefix-prefix.
         if isArmed {
-            disarm()
+            disarm(animated: false)
             passThrough()
             return
         }
         guard let screen = NSScreen.screens.first else { return }
+        leaderLog.debug("leader armed")
         isArmed = true
+        hideTask?.cancel()
+        guide.isPresented = false
         panel.contentView = NSView()
         panel.alphaValue = 0
         panel.setFrame(CGRect(x: screen.frame.midX, y: screen.frame.minY, width: 1, height: 1), display: false)
@@ -100,14 +121,27 @@ final class LeaderKey: NSObject, NSWindowDelegate {
         }
     }
 
-    func disarm() {
+    /// `animated` lets a visible key guide ease out; passthrough needs the
+    /// panel gone at once, so the posted keystroke reaches the app.
+    func disarm(animated: Bool = true) {
         guard isArmed else { return }
         isArmed = false
         guideTask?.cancel()
         repeatTask?.cancel()
         keys.stop()
-        panel.orderOut(nil)
         controller.hideShelf()
+        guard animated, guide.isPresented else {
+            guide.isPresented = false
+            panel.orderOut(nil)
+            return
+        }
+        withAnimation(.easeIn(duration: 0.12)) { guide.isPresented = false }
+        hideTask?.cancel()
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(130))
+            guard !Task.isCancelled, let self, !self.isArmed else { return }
+            self.panel.orderOut(nil)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -117,18 +151,35 @@ final class LeaderKey: NSObject, NSWindowDelegate {
     private func showGuide(on screen: NSScreen) {
         guard isArmed else { return }
         let current = controller.summary(ofSet: controller.state.current)
-        let hosting = NSHostingView(rootView: KeyGuideView(setLabel: "Set \(current.number) · \(current.name)"))
+        let hosting = NSHostingView(rootView: KeyGuideView(
+            leader: KeyboardShortcuts.Name.focusLeaderLabel,
+            setLabel: "Set \(current.number) · \(current.name)",
+            presence: guide
+        ))
         let size = hosting.fittingSize
         hosting.frame.size = size
         panel.contentView = NSView.container(for: hosting)
         let visible = screen.visibleFrame
-        panel.setFrame(CGRect(x: visible.midX - size.width / 2, y: visible.minY + 40, width: size.width, height: size.height), display: true)
-        panel.fadeIn(duration: 0.15, rise: 8, makeKey: true)
+        // The view carries its own margin for the shadow and the rise.
+        panel.setFrame(CGRect(x: visible.midX - size.width / 2, y: visible.minY + 16, width: size.width, height: size.height), display: true)
+        panel.alphaValue = 1
+        panel.makeKeyAndOrderFront(nil)
+        Task { @MainActor [guide] in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { guide.isPresented = true }
+        }
         controller.showShelf()
     }
 
     private func handle(_ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> Bool {
         let shift = flags.contains(.shift)
+        leaderLog.debug("leader key \(code) flags \(flags.rawValue) chars \(chars, privacy: .public)")
+        // Normally the hotkey catches a second leader first; this is the fallback.
+        if let leader = KeyboardShortcuts.getShortcut(for: .focusLeader),
+           Int(code) == leader.carbonKeyCode, flags.intersection([.command, .control, .option, .shift]) == leader.modifiers {
+            disarm(animated: false)
+            passThrough()
+            return true
+        }
         if let number = KeyCode.digit(code) {
             finish { shift ? $0.send(to: number) : $0.goTo(number) }
             return true
@@ -138,18 +189,23 @@ final class LeaderKey: NSObject, NSWindowDelegate {
             disarm()
         case KeyCode.tab:
             finish { $0.back() }
-        case KeyCode.left, KeyCode.right:
-            shift ? controller.swapWindows() : controller.focusOther()
-            keepArmedBriefly()
+        case KeyCode.left: pane(.left, shift: shift)
+        case KeyCode.right: pane(.right, shift: shift)
+        case KeyCode.up: pane(.up, shift: shift)
+        case KeyCode.down: pane(.down, shift: shift)
         case KeyCode.returnKey, KeyCode.enter:
             finish { $0.toggleLayout() }
-        case KeyCode.space where flags.contains(.control):
-            disarm()
-            passThrough()
         case KeyCode.space:
             finish { $0.showSwitcher() }
         default:
             switch chars.lowercased() {
+            case "h": pane(.left, shift: shift)
+            case "j": pane(.down, shift: shift)
+            case "k": pane(.up, shift: shift)
+            case "l": pane(.right, shift: shift)
+            case "v": finish { $0.split(.vertical) }
+            case "s": finish { $0.split(.horizontal) }
+            case "o": finish { $0.only() }
             case "r": finish { $0.showReplace() }
             case "f": finish { $0.toggleZoom() }
             case "\\": finish { $0.toggleFloat() }
@@ -158,6 +214,13 @@ final class LeaderKey: NSObject, NSWindowDelegate {
             }
         }
         return true
+    }
+
+    /// h/j/k/l or arrows move between panes; with ⇧ they swap the two.
+    /// The leader stays armed briefly so they can repeat.
+    private func pane(_ direction: PaneDirection, shift: Bool) {
+        shift ? controller.swapWindows() : controller.focusPane(direction)
+        keepArmedBriefly()
     }
 
     private func finish(_ action: (FocusController) -> Void) {
@@ -176,15 +239,22 @@ final class LeaderKey: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Posts ⌃Space with the hotkey off, or our own hotkey would catch it.
+    /// Posts the leader keystroke with the hotkey off, or our own hotkey
+    /// would catch it. ⌃B ⌃B is how tmux and Emacs-style ⌃B still work.
     private func passThrough() {
+        guard let leader = KeyboardShortcuts.getShortcut(for: .focusLeader) else { return }
         KeyboardShortcuts.disable(.focusLeader)
         Task {
             try? await Task.sleep(for: .milliseconds(60))
+            var flags = CGEventFlags()
+            if leader.modifiers.contains(.control) { flags.insert(.maskControl) }
+            if leader.modifiers.contains(.option) { flags.insert(.maskAlternate) }
+            if leader.modifiers.contains(.shift) { flags.insert(.maskShift) }
+            if leader.modifiers.contains(.command) { flags.insert(.maskCommand) }
             let source = CGEventSource(stateID: .combinedSessionState)
             for keyDown in [true, false] {
-                let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(KeyCode.space), keyDown: keyDown)
-                event?.flags = .maskControl
+                let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(leader.carbonKeyCode), keyDown: keyDown)
+                event?.flags = flags
                 event?.post(tap: .cghidEventTap)
             }
             try? await Task.sleep(for: .milliseconds(150))
@@ -194,19 +264,22 @@ final class LeaderKey: NSObject, NSWindowDelegate {
 }
 
 private struct KeyGuideView: View {
+    let leader: String
     let setLabel: String
+    let presence: Presence
 
-    private let rows: [(String, String)] = [
-        ("1–9", "Go to set"), ("⇧1–9", "Send window to set"), ("⇥", "Previous set"),
-        ("← →", "Focus other window"), ("⇧← →", "Swap windows"), ("↩", "Split ⇄ stacked"),
-        ("Space", "Switcher"), ("R", "Replace this window"), ("F", "Zoom to full stage"),
-        ("\\", "Float / unfloat"), ("⌃Space", "Send ⌃Space to app"), ("esc", "Cancel"),
-    ]
+    private var rows: [(String, String)] { [
+        ("1–9", "Go to set"), ("Shift 1–9", "Move window to set"), ("⇥", "Previous set"),
+        ("v", "Split side by side"), ("s", "Split top / bottom"), ("o", "Only this window"),
+        ("h j k l", "Focus pane"), ("Shift h j k l", "Swap panes"), ("↩", "Split ⇄ stacked"),
+        ("Space", "Switcher"), ("r", "Replace this window"), ("f", "Zoom to full stage"),
+        ("\\", "Float / unfloat"), (leader, "Send \(leader) to app"), ("esc", "Cancel"),
+    ] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
-                Text("⌃Space")
+                Text(leader)
                     .font(.callout.weight(.bold))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -217,14 +290,14 @@ private struct KeyGuideView: View {
                 Text(setLabel).font(.caption).foregroundStyle(.secondary)
             }
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
-                ForEach(0..<4) { row in
+                ForEach(0..<5) { row in
                     GridRow {
                         ForEach(0..<3) { column in
                             let item = rows[row * 3 + column]
                             HStack(spacing: 10) {
                                 Text(item.0)
                                     .font(.callout.weight(.semibold))
-                                    .frame(minWidth: 44)
+                                    .frame(minWidth: 84)
                                     .padding(.vertical, 2)
                                     .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                                 Text(item.1).font(.callout)
@@ -236,9 +309,15 @@ private struct KeyGuideView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
-        .frame(width: 720)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.primary.opacity(0.1)))
+        .frame(width: 780)
+        .background(.panelFill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+        .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+        // Rises from the bottom edge, like a sheet.
+        .scaleEffect(presence.isPresented ? 1 : 0.97, anchor: .bottom)
+        .offset(y: presence.isPresented ? 0 : 18)
+        .opacity(presence.isPresented ? 1 : 0)
+        .padding(24)
     }
 }
 
@@ -350,39 +429,58 @@ struct OccupiedStrip: View {
     }
 }
 
-/// Miniature of a set: one or two tiles with thumbnails or app icons.
+/// Miniature of a set at the display's proportions: one or two tiles with
+/// the window's last snapshot, or its app icon until there is one.
 struct SetPreview: View {
     let set: SetSummary
     let thumbnails: [WindowID: NSImage]
+    var cornerRadius: CGFloat = 10
+
+    private static let aspect: CGFloat = {
+        guard let frame = NSScreen.screens.first?.frame, frame.height > 0 else { return 16 / 10 }
+        return frame.width / frame.height
+    }()
 
     var body: some View {
-        if set.isEmpty {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                .foregroundStyle(.secondary)
-                .overlay(Text("Empty").font(.caption).foregroundStyle(.secondary))
-        } else {
-            HStack(spacing: 6) {
-                ForEach(set.isSplit ? set.windows : Array(set.windows.prefix(1))) { window in
-                    tile(window)
+        Color.clear
+            .aspectRatio(Self.aspect, contentMode: .fit)
+            .overlay {
+                if set.isEmpty {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                } else {
+                    GeometryReader { proxy in
+                        let inset = proxy.size.width * 0.035
+                        let gap = inset * 0.8
+                        let inner = proxy.size.width - inset * 2
+                        HStack(spacing: gap) {
+                            if set.isSplit, set.windows.count == 2 {
+                                tile(set.windows[0]).frame(width: (inner - gap) * set.ratio)
+                                tile(set.windows[1])
+                            } else if let first = set.windows.first {
+                                tile(first)
+                            }
+                        }
+                        .padding(inset)
+                    }
+                    .background(Color(red: 0.2, green: 0.24, blue: 0.29))
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                 }
             }
-            .padding(8)
-            .background(Color(red: 0.24, green: 0.29, blue: 0.35), in: RoundedRectangle(cornerRadius: 10))
-        }
     }
 
-    @ViewBuilder private func tile(_ window: WindowSummary) -> some View {
-        ZStack {
-            Color.white
-            if let image = thumbnails[window.id] {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
-            } else if let icon = window.icon {
-                Image(nsImage: icon).resizable().frame(width: 36, height: 36)
+    private func tile(_ window: WindowSummary) -> some View {
+        // Color.clear + overlay keeps a filling image inside the tile's frame.
+        Color(nsColor: .windowBackgroundColor)
+            .overlay {
+                if let image = thumbnails[window.id] {
+                    Image(nsImage: image).resizable().scaledToFill()
+                } else if let icon = window.icon {
+                    Image(nsImage: icon).resizable().scaledToFit().frame(width: 40, height: 40)
+                }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius * 0.45, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
     }
 }
 

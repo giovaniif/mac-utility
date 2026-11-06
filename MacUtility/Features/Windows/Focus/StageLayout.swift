@@ -25,8 +25,8 @@ struct StageLayout {
             if set.layout == .stacked {
                 return [set.focused ?? set.windows[0]: single]
             }
-            let (left, right) = split(ratio: set.ratio)
-            return [set.windows[0]: left, set.windows[1]: right]
+            let (first, second) = split(ratio: set.ratio, axis: set.axis)
+            return [set.windows[0]: first, set.windows[1]: second]
         }
     }
 
@@ -35,20 +35,30 @@ struct StageLayout {
         return CGRect(x: (inner.midX - width / 2).rounded(), y: inner.minY, width: width.rounded(), height: inner.height)
     }
 
-    func split(ratio: Double) -> (CGRect, CGRect) {
-        let usable = inner.width - gap
-        let leftWidth = (usable * CGFloat(ratio)).rounded()
-        let left = CGRect(x: inner.minX, y: inner.minY, width: leftWidth, height: inner.height)
-        let right = CGRect(x: left.maxX + gap, y: inner.minY, width: inner.maxX - left.maxX - gap, height: inner.height)
-        return (left, right)
+    /// First and second pane: left and right, or top and bottom.
+    func split(ratio: Double, axis: SplitAxis = .vertical) -> (CGRect, CGRect) {
+        switch axis {
+        case .vertical:
+            let usable = inner.width - gap
+            let leftWidth = (usable * CGFloat(ratio)).rounded()
+            let left = CGRect(x: inner.minX, y: inner.minY, width: leftWidth, height: inner.height)
+            let right = CGRect(x: left.maxX + gap, y: inner.minY, width: inner.maxX - left.maxX - gap, height: inner.height)
+            return (left, right)
+        case .horizontal:
+            let usable = inner.height - gap
+            let topHeight = (usable * CGFloat(ratio)).rounded()
+            let top = CGRect(x: inner.minX, y: inner.minY, width: inner.width, height: topHeight)
+            let bottom = CGRect(x: inner.minX, y: top.maxY + gap, width: inner.width, height: inner.maxY - top.maxY - gap)
+            return (top, bottom)
+        }
     }
 
-    /// The split ratio implied by the user resizing one side to `width`.
-    func ratio(forWidth width: CGFloat, isLeft: Bool) -> Double {
-        let usable = inner.width - gap
+    /// The split ratio implied by the user resizing one pane to `size`.
+    func ratio(for size: CGSize, isFirst: Bool, axis: SplitAxis = .vertical) -> Double {
+        let usable = (axis == .vertical ? inner.width : inner.height) - gap
         guard usable > 0 else { return 0.5 }
-        let share = Double(width / usable)
-        return isLeft ? share : 1 - share
+        let share = Double((axis == .vertical ? size.width : size.height) / usable)
+        return isFirst ? share : 1 - share
     }
 
     /// Where a parked window goes: a corner of the managed display with a

@@ -26,7 +26,7 @@ enum Feature: String, CaseIterable, Identifiable {
         case .keyboardCleaning: [.keyboardCleaning]
         case .clipboardHistory: [.clipboardHistory]
         case .windowManager: [.windowNextDisplay, .windowPreviousDisplay]
-        case .focus: [.focusLeader]
+        case .focus: [.focusLeader, .focusSwitcher]
         case .screenCapture: [.captureArea, .captureScreen, .recordScreen]
         }
     }

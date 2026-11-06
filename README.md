@@ -50,19 +50,22 @@ Screenshots and screen recordings in the style of CleanShot. They take over the 
 
 Moves the focused window to the next or previous display, keeping its relative position and size.
 
-### Focus window manager — `⌃Space`, then one key
+### Focus window manager — `⌃B`, then one key
 
 One display, one stage. The screen shows one set of up to two windows; everything else is parked out of sight and comes back with one keystroke. Off by default: switch it on in Settings. It won't run while Stage Manager is on.
 
-- Sets are numbered 1–9. `⌃Space` `3` goes to set 3, `⌃Space` `⇧3` sends the focused window there, `⌃Space` `⇥` goes back to the last set.
-- Two windows sit side by side. Drag the edge between them to change the split; it snaps at a third, a half and two thirds. `⌃Space` `↩` stacks them instead, `⌃Space` `←`/`→` moves focus, `⌃Space` `⇧←`/`⇧→` swaps them.
-- `⌃Space` `Space` opens the switcher: every set in a 3×3 grid, searchable by app and window title. Right-click a set to pin an app to it.
-- `⌃Space` `R` replaces the focused window with a window from another set, or with an app. The window it replaces moves to that set, or to a new one. The card that follows has Undo.
-- `⌃Space` `F` zooms the focused window to the whole screen, `⌃Space` `\` floats it.
-- Pause after `⌃Space` for a key guide. `⌃Space` twice sends `⌃Space` to the app.
+- Sets are numbered 1–9. `⌃B` `3` goes to set 3, `⌃B` `⇧3` sends the focused window there and takes you with it, `⌃B` `⇥` goes back to the last set.
+- Splits work like vim's. `⌃B` `v` splits side by side and `⌃B` `s` top and bottom: your window takes its half at once, and a picker in the empty pane offers windows from other sets and running apps (`j` `k` to move, Return to open, Esc undoes the split). On a set that already has two windows, `v` and `s` just turn the split. `⌃B` `h` `j` `k` `l` (or arrows) move between panes, with `⇧` they swap, `⌃B` `o` keeps only the focused window and moves the other to a new set.
+- Drag the edge between two windows to change the split; it snaps at a third, a half and two thirds. `⌃B` `↩` stacks them instead.
+- `⌃B` `Space` opens the switcher: every set in a 3×3 grid, with live previews of each window. `h` `j` `k` `l` or the arrows move, Return goes, `1`–`9` jump, Esc closes. Right-click a set to pin an app to it.
+- Swiping up with three fingers opens the same switcher and swiping down closes it (Settings → Focus picks three or four fingers, or off). macOS's own Mission Control swipe needs to be off in Trackpad → More Gestures, or both open.
+- `⌃↑` opens the same switcher, in place of Mission Control, which shows parked windows small and scattered. Turn off Mission Control's own `⌃↑` in System Settings → Keyboard → Keyboard Shortcuts → Mission Control so the key reaches Focus. Turning on "Group windows by application" in Desktop & Dock → Mission Control also makes Mission Control itself easier to read.
+- `⌃B` `R` replaces the focused window with a window from another set, or with a running app that has no window in a set. `j` `k` or the arrows move, Return replaces. The window it replaces moves to that set, or to a new one. The card that follows has Undo.
+- `⌃B` `F` zooms the focused window to the whole screen, `⌃B` `\` floats it.
+- Pause after `⌃B` for a key guide. `⌃B` twice sends `⌃B` to the app, so tmux and text fields still get it.
 - Push the pointer to the left edge for a shelf of the other sets.
 - A new window joins the current set if it has room, otherwise it opens the next empty set and takes you there.
-- On a wide display a lone window stops at 1,440 pt and centers (configurable).
+- On a wide display a lone window stops at 1,440 pt and centers. That width and the 12 pt gap between windows are both in Settings.
 - Switching off Focus or quitting the app brings every parked window back. If the app crashes, the next launch does.
 
 ## Menu bar and Settings
