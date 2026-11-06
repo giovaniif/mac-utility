@@ -46,13 +46,28 @@ Screenshots and screen recordings in the style of CleanShot. They take over the 
 - macOS keeps its own screenshot shortcuts until you turn them off in System Settings → Keyboard → Keyboard Shortcuts → Screenshots. Settings shows a notice with a button to open that page while they're still on.
 - Save asks where to put the file, starting on the Desktop. Screenshots are PNG (sharp on Retina displays) and recordings H.264 MP4.
 
-### Window manager — `⌃⌘→` / `⌃⌘←`
+### Move windows between displays — `⌃⌘→` / `⌃⌘←`
 
 Moves the focused window to the next or previous display, keeping its relative position and size.
 
+### Focus window manager — `⌃Space`, then one key
+
+One display, one stage. The screen shows one set of up to two windows; everything else is parked out of sight and comes back with one keystroke. Off by default: switch it on in Settings. It won't run while Stage Manager is on.
+
+- Sets are numbered 1–9. `⌃Space` `3` goes to set 3, `⌃Space` `⇧3` sends the focused window there, `⌃Space` `⇥` goes back to the last set.
+- Two windows sit side by side. Drag the edge between them to change the split; it snaps at a third, a half and two thirds. `⌃Space` `↩` stacks them instead, `⌃Space` `←`/`→` moves focus, `⌃Space` `⇧←`/`⇧→` swaps them.
+- `⌃Space` `Space` opens the switcher: every set in a 3×3 grid, searchable by app and window title. Right-click a set to pin an app to it.
+- `⌃Space` `R` replaces the focused window with a window from another set, or with an app. The window it replaces moves to that set, or to a new one. The card that follows has Undo.
+- `⌃Space` `F` zooms the focused window to the whole screen, `⌃Space` `\` floats it.
+- Pause after `⌃Space` for a key guide. `⌃Space` twice sends `⌃Space` to the app.
+- Push the pointer to the left edge for a shelf of the other sets.
+- A new window joins the current set if it has room, otherwise it opens the next empty set and takes you there.
+- On a wide display a lone window stops at 1,440 pt and centers (configurable).
+- Switching off Focus or quitting the app brings every parked window back. If the app crashes, the next launch does.
+
 ## Menu bar and Settings
 
-The menu bar panel holds on/off switches: one to start keyboard cleaning, and one each to turn clipboard history, the window manager and screen capture on or off.
+The menu bar panel holds on/off switches: one to start keyboard cleaning, and one each to turn clipboard history, Focus, moving windows between displays and screen capture on or off. While Focus runs, the menu bar icon shows the numbers of the sets that have windows.
 
 Settings has the feature switches, launch at login, every shortcut (all of them can be changed) and the permission status.
 
@@ -60,9 +75,9 @@ Settings has the feature switches, launch at login, every shortcut (all of them 
 
 | Permission | Used for |
 | --- | --- |
-| Accessibility | Moving windows and pasting from clipboard history |
+| Accessibility | Moving and arranging windows, and pasting from clipboard history |
 | Input Monitoring | Blocking the keyboard in cleaning mode, showing keystrokes in recordings |
-| Screen Recording | Screenshots and screen recordings |
+| Screen Recording | Screenshots, screen recordings, and Focus's previews and transitions |
 | Camera, Microphone | The camera bubble and voice in recordings, only if you turn them on |
 
 The app asks for each one when a feature first needs it. Settings shows what's granted.
@@ -114,8 +129,11 @@ MacUtility/
     KeyboardClean/   event tap and cleaning overlay
     Clipboard/       watcher, SQLite store and picker panel
     Capture/         area/window picker, screenshots, recorder, previews
-    Windows/         window mover
+    Windows/         window mover, and Focus/ (sets, stage layout, leader key, switcher)
+MacUtilityTests/  unit tests for Focus's set rules and layout
 DESIGN.md     design notes for each feature
 ```
+
+Run the tests with `xcodebuild -project MacUtility.xcodeproj -scheme MacUtility test`.
 
 Built with [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) and [GRDB](https://github.com/groue/GRDB.swift).

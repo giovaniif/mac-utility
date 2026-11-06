@@ -4,7 +4,7 @@ import KeyboardShortcuts
 /// A user-toggleable feature. Disabling one hides its menu items and
 /// unregisters its global hotkeys.
 enum Feature: String, CaseIterable, Identifiable {
-    case keyboardCleaning, clipboardHistory, windowManager, screenCapture
+    case keyboardCleaning, clipboardHistory, windowManager, focus, screenCapture
 
     var id: String { rawValue }
 
@@ -15,7 +15,8 @@ enum Feature: String, CaseIterable, Identifiable {
         switch self {
         case .keyboardCleaning: "Keyboard cleaning mode"
         case .clipboardHistory: "Clipboard history"
-        case .windowManager: "Window manager"
+        case .windowManager: "Move windows between displays"
+        case .focus: "Focus window manager"
         case .screenCapture: "Screen capture"
         }
     }
@@ -25,12 +26,16 @@ enum Feature: String, CaseIterable, Identifiable {
         case .keyboardCleaning: [.keyboardCleaning]
         case .clipboardHistory: [.clipboardHistory]
         case .windowManager: [.windowNextDisplay, .windowPreviousDisplay]
+        case .focus: [.focusLeader]
         case .screenCapture: [.captureArea, .captureScreen, .recordScreen]
         }
     }
 
+    /// Focus takes over every window, so it waits to be switched on.
+    var defaultEnabled: Bool { self != .focus }
+
     var isEnabled: Bool {
-        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? defaultEnabled
     }
 
     @MainActor

@@ -9,6 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Hotkeys.register(actions)
+        // Starts Focus, or brings back windows a crashed session left parked.
+        actions.focus.syncWithFeature()
         #if DEBUG
         if let path = UserDefaults.standard.string(forKey: "testPreview") {
             actions.screenCapture.showTestPreview(URL(fileURLWithPath: path))
@@ -28,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             UserDefaults.standard.set(true, forKey: "onboardingShown")
             showOnboarding()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        actions.focus.stop()
     }
 
     func showOnboarding() {

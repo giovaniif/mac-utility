@@ -8,6 +8,7 @@ extension KeyboardShortcuts.Name {
     static let captureScreen = Self("captureScreen", default: .init(.three, modifiers: [.shift, .command]))
     static let recordScreen = Self("recordScreen", default: .init(.five, modifiers: [.shift, .command]))
     static let windowPreviousDisplay = Self("windowPreviousDisplay", default: .init(.leftArrow, modifiers: [.control, .command]))
+    static let focusLeader = Self("focusLeader", default: .init(.space, modifiers: [.control]))
 }
 
 @MainActor
@@ -17,6 +18,7 @@ enum Hotkeys {
         KeyboardShortcuts.onKeyUp(for: .clipboardHistory) { actions.showClipboardHistory() }
         KeyboardShortcuts.onKeyUp(for: .windowNextDisplay) { actions.moveWindow(.next) }
         KeyboardShortcuts.onKeyUp(for: .windowPreviousDisplay) { actions.moveWindow(.previous) }
+        KeyboardShortcuts.onKeyDown(for: .focusLeader) { actions.focusLeader() }
         KeyboardShortcuts.onKeyUp(for: .captureArea) { actions.captureArea() }
         KeyboardShortcuts.onKeyUp(for: .captureScreen) { actions.captureScreen() }
         KeyboardShortcuts.onKeyUp(for: .recordScreen) { actions.toggleRecording() }

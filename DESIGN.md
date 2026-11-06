@@ -76,6 +76,118 @@ Risk: Apple has been adding privacy prompts for programmatic pasteboard reads. I
 - Order of operations: set size, then position, then size again. That's the known workaround for apps that clamp size to the current screen.
 - Skip native full-screen windows (moving them via AX doesn't work reliably) and show a short HUD instead.
 
+## 4. Focus — one display, one stage
+
+Previews: https://claude.ai/artifact/EZ8EqPgVFXvK9famhZkgFa (the Switcher and Replace boards are interactive). Built on the `focus-window-manager` branch; "Status" at the end of this section says what isn't done or verified yet.
+
+The screen shows one small group of windows at a time. Everything else is parked out of sight and comes back with one keystroke. It's built for a single display, laptop or desktop. The `⌃⌘←`/`⌃⌘→` display moves from section 3 keep working unchanged.
+
+### Model
+
+- **Stage:** the visible frame of the managed display, minus a 12 pt gap on every side. Only the current set is on it.
+- **Set:** up to 2 windows, numbered 1–9. A set is named after its first window's app, and has a layout. The stage shows exactly one set at a time.
+- **Layouts:**
+  - One window: it fills the stage, up to a width cap, then centers.
+  - Two windows: either split side by side, or stacked, where only the focused one shows at full stage size and the other is parked behind it.
+  - Split ratio: drag the gap to change it. It snaps to 1/3, 1/2 and 2/3. The default is 1/2.
+- **Width cap:** a lone window stops at 1440 pt wide and centers. On the laptop this never kicks in, but on the 1920 Dell it does. Split sets use the full width. The cap is configurable in Settings.
+- **Floating:** dialogs, sheets, panels, windows that can't be resized, and apps on a float list are never tiled or counted. They stay where the app puts them. `⌃Space` `\` toggles floating for the focused window.
+- **Unmanaged:** minimized windows, native full-screen windows, windows on other displays and windows on other macOS Spaces. When a window becomes managed again, it rejoins the set it was in.
+
+### Rules
+
+- **New window:** it joins the current set if the set has room. Otherwise it opens a new set (the lowest free number), takes you there, and the HUD says why.
+- **Closing a window:** if one window is left, it fills the stage. If the set becomes empty, it keeps its number and you stay on an empty stage. `⌃Space` `⇥` takes you back.
+- **Sending a window to a set (`⌃Space` `⇧N`):** if set N has room, the window joins it. If set N is full, the window swaps places with set N's unfocused window. You stay on the current set.
+- **Replace (`⌃Space` `R`):** puts a window from another set, or a new app, into the focused window's place.
+  - A window from another set trades places with the focused window.
+  - A new app pushes the focused window into a new set.
+  - The HUD offers Undo for 5 s.
+- **Quitting an app** takes its windows out of their sets. When the app relaunches, its windows go back to their last set, matched by bundle ID plus window title, or by bundle ID alone for apps with one window.
+- **Pinning:** an app can be pinned to a set (Settings, or the switcher's context menu). Its new windows go there instead of following the new-window rule.
+- **Previous set:** `⌃Space` `⇥` goes back to the last set you were in. Doing it again comes back, like i3.
+
+### Shortcuts: a leader key, like tmux
+
+- **Leader:** press `⌃Space`, let go, then press one command key, e.g. `⌃Space` `3` goes to set 3. It's the only global hotkey Focus registers, and it can be rebound in Settings.
+- **Key guide:** if no second key comes within 500 ms, a small key guide appears at the bottom of the screen. The shelf appears at the same time, since a pause usually means you're looking for something. The leader stays armed until you press a key, press `Esc` or click elsewhere.
+- **Arrows repeat:** after an arrow, the leader stays armed for 600 ms so more arrows work without pressing it again, like tmux's repeat flag.
+- **Passthrough:** pressing `⌃Space` twice sends `⌃Space` to the app. macOS uses `⌃Space` to switch input source by default. That doesn't matter here with one keyboard layout; anyone with several should move that shortcut in System Settings.
+- **Unknown keys:** an unbound key closes the guide and does nothing. It never reaches the app.
+
+| After `⌃Space` | Action |
+| --- | --- |
+| `1`–`9` | Go to set |
+| `⇧1`–`9` | Send focused window to set |
+| `⇥` | Previous set |
+| `←` / `→` | Focus the other window in the set |
+| `⇧←` / `⇧→` | Swap the two windows |
+| `↩` | Split ⇄ stacked |
+| `Space` | Switcher |
+| `R` | Replace focused window |
+| `F` | Zoom focused window to the full stage, no width cap; again to restore |
+| `\` | Float / unfloat |
+| `⌃Space` | Send `⌃Space` to the app |
+| `Esc` | Cancel |
+
+`⌃⌘←`/`⌃⌘→` (move window to the other display) stay direct hotkeys, unchanged.
+
+How it works:
+- The leader is a `KeyboardShortcuts` hotkey, like the others.
+- Pressing it opens a non-activating key panel that takes keyboard focus, like the clipboard panel. The panel is invisible until the 500 ms guide delay.
+- The panel reads the next key, runs the command, closes and hands focus back to the window you were in. No event tap and no new permission.
+- For passthrough, Focus disables the hotkey, posts `⌃Space` with `CGEvent`, then re-enables it. The Carbon hotkey would otherwise catch the synthetic press.
+
+### UI
+
+- **Menu bar:** the existing item gains the numbers of the sets that have windows, with the current one filled in. Clicking it opens the switcher.
+- **HUD:** shows when you switch sets, when a new window opens a new set, and after Replace. It shows the set number, name, apps and the occupied sets, then fades after 1.2 s. Built on the existing `HUD`.
+- **Shelf:** a strip of cards for the other sets at the left edge. It appears when the pointer rests at the edge for 150 ms or when the leader's key guide appears. Click a card to go there.
+- **Switcher:** a full-screen 3×3 grid in which each set's position matches its number.
+  - Typing filters by set name, app or window title.
+  - Arrows move the selection, `Return` goes, and `1`–`9` jump straight to a set. `Esc` clears the search, then closes.
+  - It opens on the previous set, so `⌃Space` `Space` `Return` works like ⌘Tab.
+- **Replace picker:** a search panel over the focused window. It lists windows in other sets, each with its set badge, then apps.
+  - Apps come from `/Applications`, `/System/Applications` and `~/Applications`, listed once, one folder level deep.
+- **Panels:** all of them are non-activating `NSPanel`s, so focus stays in the app you were using, the same as the clipboard panel.
+- **Motion:** switching sets crossfades. Focus captures the display through ScreenCaptureKit, covers it with that still, moves the real windows underneath, then fades the still out over 0.2 s. With Reduce Motion on, or without Screen Recording, windows jump without animation.
+
+### Implementation
+
+- **Code:** everything is under `Features/Windows/Focus/`:
+  - `StageState`: sets and rules, pure and testable.
+  - `StageLayout`: frames and parking corners, pure.
+  - `WindowRegistry`: tracks windows.
+  - `FocusController`: placement, parking, events and commands.
+  - `FocusStore`: the state file, crash recovery and the Stage Manager check.
+  - `FocusPanels`: leader key, key guide, HUD.
+  - `FocusPickers`: switcher, Replace picker, shelf.
+  - `StageMotion`: crossfade and thumbnails.
+  - The AX helpers moved out of `WindowMover` into `AXUIElement+Helpers.swift`, so both share them.
+- **Tracking:**
+  - One `AXObserver` per running app, for window created, destroyed, focused, minimized, deminiaturized, moved and resized.
+  - `NSWorkspace` notifications for app launch, terminate, activate, hide and unhide.
+  - Window identity comes from `_AXUIElementGetWindow`, which is private but has been stable for years and is used by every macOS window manager. A window without an ID is left unmanaged. Destroyed windows no longer answer, so those are matched by AX element.
+- **Parking:** a parked window keeps its size and moves to the bottom-right corner of the managed display, with a 1 pt sliver left on screen, because macOS won't let a window go fully off-screen. This is AeroSpace's approach and needs only Accessibility. Real Spaces would need SIP disabled, so they're out.
+- **Recovery:** this is the main risk, and it ships in step 1.
+  - Every park writes the window's last on-stage frame to `~/Library/Application Support/MacUtility/focus-state.json`.
+  - When the app quits, or Focus is switched off, every parked window is brought back.
+  - At launch, if the state file shows an unclean exit, every parked window is brought back before anything else runs.
+- **Thumbnails:** shelf and switcher cards use crops of the crossfade still, taken just before a set is parked. Capturing a parked window live isn't reliable. This reuses the Screen Recording permission from screen capture. Cards show app icons until a set has been switched away from once, and always without that permission.
+- **Managed display:** the one with the menu bar, `NSScreen.screens[0]`. A window moved onto it with `⌃⌘←`/`→` follows the new-window rule. A window moved off it leaves its set.
+- **Stage Manager:** Focus reads `com.apple.WindowManager GloballyEnabled`. If Stage Manager is on, Focus won't start. It shows a sheet with a button that opens Desktop & Dock settings. It's on on this Mac right now.
+- **Spaces:** Focus assumes one Space per display. Windows on other Spaces aren't managed, and Settings recommends a single Space.
+- **Feature flag:** a new `Feature.focus`, off by default and turned on from Settings because it takes over every window. It's separate from `Feature.windowManager`, which keeps the display moves.
+- **Tests:** `MacUtilityTests` (Swift Testing) compiles only `StageState` and `StageLayout`, so it runs without launching the app. 27 tests cover layout frames and the width cap, the new-window rule, send to a full set, Replace swaps and Undo, closes, adoption, ratio snapping and parking corners.
+- **Leaving a parking corner:** an app that quits while its window is parked reopens it in the corner. Focus treats a window that is off every display but touches the managed one as belonging to it.
+
+### Status
+
+- Decisions: split ⇄ stacked stays, an emptied set keeps the stage on it, and sets are named after their first app.
+- Everything in this section is built except dragging a shelf card onto a window to swap.
+- `xcodebuild test`: 27 of 27 pass. The app builds with no warnings and launches.
+- Not run end to end yet. Stage Manager is on on this Mac, so Focus refuses to start, and turning it off is your call. Nothing here has been checked against real windows: parking, raising, the crossfade, the leader panel taking keys, and the Dell plus MacBook layout.
+
 ## Build order
 
 1. App shell: menu bar, settings, permission onboarding, hotkeys.

@@ -6,12 +6,14 @@ struct MacUtilityApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("Mac Utility", systemImage: "wrench.and.screwdriver") {
+        MenuBarExtra {
             MenuBarContent(actions: appDelegate.actions)
+        } label: {
+            MenuBarLabel(focus: appDelegate.actions.focus)
         }
         .menuBarExtraStyle(.window)
         Settings {
-            SettingsView(permissions: appDelegate.permissions)
+            SettingsView(permissions: appDelegate.permissions, focus: appDelegate.actions.focus)
         }
     }
 }
@@ -33,6 +35,7 @@ struct MenuBarContent: View {
                 }
             }
             FeatureToggle(feature: .clipboardHistory)
+            FeatureToggle(feature: .focus)
             FeatureToggle(feature: .windowManager)
             FeatureToggle(feature: .screenCapture)
             if screenCapture {
@@ -63,5 +66,21 @@ struct MenuBarContent: View {
         .toggleStyle(.switch)
         .padding(14)
         .frame(width: 260)
+    }
+}
+
+/// The wrench, or while Focus runs, the numbers of the sets with windows.
+struct MenuBarLabel: View {
+    let focus: FocusController
+
+    var body: some View {
+        let occupied = focus.state.occupied
+        if focus.isRunning, !occupied.isEmpty {
+            Image(nsImage: SetsMenuBarImage.make(occupied: occupied, current: focus.state.current))
+                .accessibilityLabel("Mac Utility, Focus set \(focus.state.current)")
+        } else {
+            Image(systemName: "wrench.and.screwdriver")
+                .accessibilityLabel("Mac Utility")
+        }
     }
 }

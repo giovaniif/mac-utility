@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
     let permissions: Permissions
+    let focus: FocusController
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -25,6 +26,7 @@ struct SettingsView: View {
             Section("Features") {
                 ForEach(Feature.allCases) { FeatureToggle(feature: $0) }
             }
+            FocusSettings(focus: focus)
             Section("Shortcuts") {
                 KeyboardShortcuts.Recorder("Keyboard cleaning mode", name: .keyboardCleaning)
                 KeyboardShortcuts.Recorder("Clipboard history", name: .clipboardHistory)
@@ -53,12 +55,15 @@ struct FeatureToggle: View {
 
     init(feature: Feature) {
         self.feature = feature
-        _enabled = AppStorage(wrappedValue: true, feature.defaultsKey)
+        _enabled = AppStorage(wrappedValue: feature.defaultEnabled, feature.defaultsKey)
     }
 
     var body: some View {
         Toggle(isOn: $enabled) { Text(feature.title).frame(maxWidth: .infinity, alignment: .leading) }
-            .onChange(of: enabled) { feature.applyHotkeys() }
+            .onChange(of: enabled) {
+                feature.applyHotkeys()
+                NotificationCenter.default.post(name: .featureToggled, object: feature)
+            }
     }
 }
 
@@ -68,7 +73,7 @@ struct PermissionRows: View {
     var body: some View {
         PermissionRow(
             title: "Accessibility",
-            detail: "Move windows and paste from clipboard history.",
+            detail: "Arrange and move windows, and paste from clipboard history.",
             granted: permissions.accessibility,
             grant: permissions.requestAccessibility
         )
@@ -80,7 +85,7 @@ struct PermissionRows: View {
         )
         PermissionRow(
             title: "Screen Recording",
-            detail: "Take screenshots and record the screen.",
+            detail: "Take screenshots, record the screen, and show window previews in Focus.",
             granted: permissions.screenRecording,
             grant: permissions.requestScreenRecording
         )
@@ -109,3 +114,44 @@ private struct PermissionRow: View {
     }
 }
 
+
+private struct FocusSettings: View {
+    let focus: FocusController
+    @AppStorage("focus.widthCap") private var widthCap = 1440.0
+
+    var body: some View {
+        Section("Focus") {
+            KeyboardShortcuts.Recorder("Leader key", name: .focusLeader)
+            VStack(alignment: .leading) {
+                Slider(value: $widthCap, in: 960...2560, step: 40) {
+                    Text("Single window width")
+                }
+                Text("A lone window stops at \(Int(widthCap)) pt wide and centers. Split sets always use the full width.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if focus.pins.isEmpty {
+                Text("Pin an app to a set from the switcher (⌃Space Space), with a right-click on the set.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(focus.pins.sorted { $0.value < $1.value }, id: \.key) { bundleID, number in
+                    HStack {
+                        Text(appName(bundleID))
+                        Spacer()
+                        Text("Set \(number)").foregroundStyle(.secondary)
+                        Button("Unpin") { focus.unpin(bundleID) }
+                    }
+                }
+            }
+            Text("Focus works best with one macOS Space per display, and doesn't run while Stage Manager is on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func appName(_ bundleID: String) -> String {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+}

@@ -47,3 +47,32 @@ targets:
         DEVELOPMENT_TEAM: 827UMZ89C2
         GENERATE_INFOPLIST_FILE: NO
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  MacUtilityTests:
+    type: bundle.unit-test
+    platform: macOS
+    # Only the pure Focus files, so the tests run without launching the app.
+    sources:
+      - MacUtilityTests
+      - MacUtility/Features/Windows/Focus/StageState.swift
+      - MacUtility/Features/Windows/Focus/StageLayout.swift
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtilityTests
+schemes:
+  MacUtility:
+    build:
+      targets:
+        MacUtility: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MacUtilityTests
+    archive:
+      config: Release
+

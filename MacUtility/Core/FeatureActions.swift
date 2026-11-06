@@ -13,12 +13,14 @@ final class FeatureActions {
     let keyboardCleaner: KeyboardCleaner
     private let clipboardHistory: ClipboardHistory
     let screenCapture: ScreenCapture
+    let focus: FocusController
 
     init(permissions: Permissions) {
         windowMover = WindowMover(permissions: permissions)
         keyboardCleaner = KeyboardCleaner(permissions: permissions)
         clipboardHistory = ClipboardHistory(permissions: permissions)
         screenCapture = ScreenCapture(permissions: permissions)
+        focus = FocusController(permissions: permissions)
     }
 
     func toggleKeyboardCleaning() {
@@ -34,6 +36,11 @@ final class FeatureActions {
     func moveWindow(_ direction: DisplayDirection) {
         guard Feature.windowManager.isEnabled else { return }
         windowMover.move(direction)
+    }
+
+    func focusLeader() {
+        guard Feature.focus.isEnabled else { return }
+        focus.armLeader()
     }
 
     func captureArea() {
