@@ -58,7 +58,7 @@ Storage:
 
 UI (Paste-style):
 - `⇧⌘V` opens a non-activating `NSPanel` as a bottom strip of cards on the active display, so focus stays in the target app.
-- Type to search right away. ←/→ to move, Return to paste, ⌘1–9 for quick paste, ⌘P to pin, ⌫ to delete, Esc to close.
+- Type to search right away. ←/→ to move, Return to paste, ⌘1–9 for quick paste, ⌘D to favorite (favorites are never pruned), Tab to show only favorites, ⌫ to delete, Esc to close.
 - Each card shows a content preview, the source app icon and how long ago it was copied.
 
 Paste:

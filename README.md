@@ -26,7 +26,7 @@ Remembers what you copy and lets you paste it again.
 
 - Keeps text, rich text, images and files, with the app each item came from.
 - Opens as a strip of cards along the bottom of the screen without stealing focus from the app you're in.
-- Type to search. `←`/`→` to move, `Return` to paste, `⇧Return` to paste as plain text, `⌘1`–`⌘9` for quick paste, `⌘P` to pin, `⌫` to delete, `Esc` to close.
+- Type to search. `←`/`→` to move, `Return` to paste, `⇧Return` to paste as plain text, `⌘1`–`⌘9` for quick paste, `⌘D` to favorite (favorites are never pruned), `Tab` to show only favorites, `⌫` to delete, `Esc` to close.
 - Copying the same thing again moves it to the top instead of adding a duplicate.
 - Skips anything password managers mark as hidden, and never records 1Password or Keychain Access.
 - Keeps the last 1,000 items or 30 days, whichever comes first. Pinned items never expire.

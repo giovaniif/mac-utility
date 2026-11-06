@@ -7,13 +7,15 @@ import SwiftUI
 final class ClipboardPanelModel {
     var query = ""
     var selection = 0
+    var favoritesOnly = false
     let store: ClipboardStore
 
     init(store: ClipboardStore) { self.store = store }
 
     var results: [ClipboardItem] {
-        guard let matches = store.search(query) else { return store.items }
-        return store.items.filter { matches.contains($0.id) }
+        let items = favoritesOnly ? store.items.filter(\.pinned) : store.items
+        guard let matches = store.search(query) else { return items }
+        return items.filter { matches.contains($0.id) }
     }
 
     var selected: ClipboardItem? {
@@ -77,6 +79,7 @@ final class ClipboardPanel: NSObject, NSWindowDelegate {
     func show() {
         model.query = ""
         model.selection = 0
+        model.favoritesOnly = false
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
@@ -126,6 +129,9 @@ final class ClipboardPanel: NSObject, NSWindowDelegate {
         switch keyCode {
         case 53: // Esc
             hide()
+        case 48: // Tab
+            model.favoritesOnly.toggle()
+            model.selection = 0
         case 123: // ←
             model.move(-1)
         case 124: // →
@@ -143,7 +149,7 @@ final class ClipboardPanel: NSObject, NSWindowDelegate {
                 let results = model.results
                 guard results.indices.contains(digit - 1) else { return true }
                 onCommand(.paste(results[digit - 1], plainText: flags.contains(.shift)))
-            } else if chars.lowercased() == "p", let item = model.selected {
+            } else if ["d", "p"].contains(chars.lowercased()), let item = model.selected {
                 model.store.togglePin(item.id)
             } else {
                 return false
@@ -162,6 +168,14 @@ private struct ClipboardPanelView: View {
         let results = model.results
         VStack(alignment: .leading, spacing: 10) {
             HStack {
+                Picker("", selection: $model.favoritesOnly) {
+                    Text("All").tag(false)
+                    Label("Favorites", systemImage: "star.fill").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .onChange(of: model.favoritesOnly) { model.selection = 0 }
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search clipboard history", text: $model.query)
                     .textFieldStyle(.plain)
@@ -169,14 +183,14 @@ private struct ClipboardPanelView: View {
                     .focused($searchFocused)
                     .onChange(of: model.query) { model.selection = 0 }
                 Spacer()
-                Text("⏎ paste  ⇧⏎ plain  ⌘P pin  ⌫ delete")
+                Text("⏎ paste  ⇧⏎ plain  ⌘D favorite  ⇥ favorites  ⌫ delete")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 6)
 
             if results.isEmpty {
-                Text(model.query.isEmpty ? "Nothing copied yet" : "No matches")
+                Text(!model.query.isEmpty ? "No matches" : model.favoritesOnly ? "No favorites yet. Press ⌘D on an item" : "Nothing copied yet")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -193,6 +207,11 @@ private struct ClipboardPanelView: View {
                                 .id(item.id)
                                 .onTapGesture(count: 2) { onPaste(item) }
                                 .onTapGesture { model.selection = index }
+                                .contextMenu {
+                                    Button(item.pinned ? "Remove from Favorites" : "Add to Favorites") {
+                                        model.store.togglePin(item.id)
+                                    }
+                                }
                             }
                         }
                         .padding(.horizontal, 6)
@@ -232,7 +251,7 @@ private struct ClipboardCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if item.pinned {
-                    Image(systemName: "pin.fill").font(.caption).foregroundStyle(.orange)
+                    Image(systemName: "star.fill").font(.caption).foregroundStyle(.yellow)
                 }
                 if index < 9 {
                     Text("⌘\(index + 1)").font(.caption.monospaced()).foregroundStyle(.secondary)
