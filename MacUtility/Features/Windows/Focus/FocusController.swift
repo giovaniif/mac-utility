@@ -281,7 +281,8 @@ final class FocusController {
                 NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first?.activate()
             }
         }
-        for id in state.allWindows where frames[id] == nil { park(id) }
+        let upcoming = nextFrames()
+        for id in state.allWindows where frames[id] == nil { park(id, size: upcoming[id]?.size) }
         rememberSets()
         scheduleSave()
     }
@@ -306,15 +307,35 @@ final class FocusController {
         window.element.setFrame(rect)
     }
 
-    private func park(_ id: WindowID) {
+    /// Where every parked window will sit when its set is next on stage.
+    private func nextFrames() -> [WindowID: CGRect] {
+        var frames: [WindowID: CGRect] = [:]
+        for number in StageState.numbers {
+            let set = state[set: number]
+            frames.merge(layout.frames(for: set)) { current, _ in current }
+            // The hidden half of a stacked set comes back at full stage size.
+            for id in set.windows where frames[id] == nil { frames[id] = layout.single }
+        }
+        return frames
+    }
+
+    /// Parks a window in the corner, already at the size it will have when
+    /// it's next shown. It then comes back without resizing on screen, and
+    /// its picture in the slide matches its box instead of being stretched.
+    private func park(_ id: WindowID, size: CGSize? = nil) {
         guard let window = registry.windows[id], let frame = window.frame else { return }
+        let target = size ?? frame.size
         let others = NSScreen.screens.dropFirst().map { ax($0.frame) }
-        let origin = StageLayout.parkingOrigin(size: frame.size, display: displayRect, otherDisplays: others)
+        let origin = StageLayout.parkingOrigin(size: target, display: displayRect, otherDisplays: others)
         if !parked.contains(id), displayRect.intersects(frame) { homes[id] = frame }
         parked.insert(id)
-        guard abs(frame.minX - origin.x) >= 1 || abs(frame.minY - origin.y) >= 1 else { return }
+        let moves = abs(frame.minX - origin.x) >= 1 || abs(frame.minY - origin.y) >= 1
+        let resizes = abs(frame.width - target.width) >= 1 || abs(frame.height - target.height) >= 1
+        guard moves || resizes else { return }
         markOwnChange(id)
-        window.element.set(kAXPositionAttribute, point: origin)
+        // Off screen first, then resize, so the resize is never seen.
+        if moves { window.element.set(kAXPositionAttribute, point: origin) }
+        if resizes { window.element.set(kAXSizeAttribute, size: target) }
     }
 
     private func markOwnChange(_ id: WindowID) {

@@ -15,6 +15,8 @@ private let motionLog = Logger(subsystem: "com.giovani.MacUtility", category: "f
 @MainActor
 final class StageMotion {
     private var overlay: NSPanel?
+    /// Animations still playing on the cover; it lifts when the last ends.
+    private var playing = 0
     private var filter: (filter: SCContentFilter, displayID: CGDirectDisplayID, at: Date)?
     private var content: (content: SCShareableContent, at: Date)?
     private var wallpaper: (image: CGImage, displayID: CGDirectDisplayID, at: Date)?
@@ -65,6 +67,7 @@ final class StageMotion {
             let windowShots = Task { await self.windowImages(captureIDs) }
             let wallpaperShot = Task { await self.wallpaperImage(for: screen) }
             let area = stageArea(of: screen)
+            let local = { (rect: CGRect) in rect.offsetBy(dx: -area.minX, dy: -area.minY) }
             var thumbnails: [WindowID: NSImage] = [:]
             let oldStage: CALayer
             if carried.isEmpty {
@@ -85,28 +88,46 @@ final class StageMotion {
                 change(thumbnails)
                 return
             }
-            let images = await windowShots.value
+            var images = await windowShots.value
             let backdrop = await wallpaperShot.value
             // The carried window sits above the old stage from the start,
             // where it is now, so nothing changes on screen when the cover goes up.
-            let travellers = carried.compactMap { item -> (CALayer, Carried)? in
+            let travellers = carried.compactMap { item -> (WindowLayer, Carried)? in
                 guard let image = images[item.id] else { return nil }
-                return (windowLayer(image, frame: item.from.offsetBy(dx: -area.minX, dy: -area.minY)), item)
+                return (WindowLayer(image, frame: local(item.from)), item)
             }
             let newStage = stageLayer(
                 area: area, screen: screen, wallpaper: backdrop,
                 windows: incoming.filter { !carriedIDs.contains($0.id) }, images: images
             )
-            let overlay = showOverlay(oldStage, above: travellers.map(\.0), area: area)
-            // Start the slide before any window moves. The animation runs in
-            // the window server, so the Accessibility calls that move windows
-            // (they block the main thread for 50–150 ms) can't stall it, and
-            // the windows settle under the cover while it plays.
-            run(overlay, old: oldStage, new: newStage, travellers: travellers.map { ($0.0, $0.1.to.offsetBy(dx: -area.minX, dy: -area.minY)) }, width: area.width, forward: forward)
+            let overlay = showOverlay(oldStage, above: travellers.map(\.0.container), area: area)
             CATransaction.flush()
             try? await Task.sleep(for: .milliseconds(16))
             for (id, image) in images { thumbnails[id] = Self.thumbnail(image) }
+
+            // Start the slide before any window moves. The animation runs in
+            // the window server, so the Accessibility calls that move windows
+            // (they block the main thread for 50–150 ms) can't stall it, and
+            // the windows settle under the cover meanwhile.
+            playing = travellers.isEmpty ? 1 : 2
+            slideStages(overlay, old: oldStage, new: newStage, width: area.width, forward: forward)
+            CATransaction.flush()
             change(thumbnails)
+            guard !travellers.isEmpty else { return }
+            // A carried window changes size. It holds still while the sets
+            // slide; once the app has laid itself out at the new size, it's
+            // captured again and grows or shrinks into place like a live
+            // resize, instead of stretching the old picture.
+            try? await Task.sleep(for: .milliseconds(60))
+            content = nil
+            let resized = await windowImages(carried.map(\.id))
+            for (layer, item) in travellers {
+                if let image = resized[item.id] {
+                    images[item.id] = image
+                    layer.setImage(image)
+                }
+            }
+            moveTravellers(overlay, travellers.map { ($0.0, local($0.1.to)) })
         }
     }
 
@@ -123,8 +144,7 @@ final class StageMotion {
         return image.cropping(to: CGRect(x: 0, y: menuBar, width: CGFloat(image.width), height: CGFloat(image.height) - menuBar).integral)
     }
 
-    /// The new stage as layers: wallpaper, then each window where it's going,
-    /// with a shadow like the real one.
+    /// The new stage as layers: wallpaper, then each window where it's going.
     private func stageLayer(area: CGRect, screen: NSScreen, wallpaper: CGImage?, windows: [(id: WindowID, frame: CGRect)], images: [WindowID: CGImage]) -> CALayer {
         let root = CALayer()
         root.frame = CGRect(origin: .zero, size: area.size)
@@ -139,29 +159,68 @@ final class StageMotion {
         }
         for window in windows {
             guard let image = images[window.id] else { continue }
-            root.addSublayer(windowLayer(image, frame: window.frame.offsetBy(dx: -area.minX, dy: -area.minY)))
+            root.addSublayer(WindowLayer(image, frame: window.frame.offsetBy(dx: -area.minX, dy: -area.minY)).container)
         }
         return root
     }
 
-    /// A captured window with a shadow like the real one.
-    private func windowLayer(_ image: CGImage, frame: CGRect) -> CALayer {
-        let layer = CALayer()
-        layer.frame = frame
-        layer.contents = image
-        layer.contentsGravity = .resize
-        layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOpacity = 0.35
-        layer.shadowRadius = 22
-        layer.shadowOffset = CGSize(width: 0, height: -10)
-        return layer
+    /// A captured window: a shadow-casting container and a clipped picture
+    /// pinned to its top-left. The picture is never stretched; if the box and
+    /// the picture differ, the box clips it, the way a window's content
+    /// behaves while the window resizes.
+    @MainActor
+    final class WindowLayer {
+        let container = CALayer()
+        let content = CALayer()
+
+        init(_ image: CGImage, frame: CGRect) {
+            container.frame = frame
+            container.shadowColor = NSColor.black.cgColor
+            container.shadowOpacity = 0.32
+            container.shadowRadius = 20
+            container.shadowOffset = CGSize(width: 0, height: -10)
+            content.frame = CGRect(origin: .zero, size: frame.size)
+            content.masksToBounds = true
+            content.cornerRadius = 12
+            content.cornerCurve = .continuous
+            content.contentsGravity = .topLeft
+            setImage(image)
+            container.addSublayer(content)
+        }
+
+        func setImage(_ image: CGImage) {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            content.contents = image
+            // Pixel-for-point on Retina, so .topLeft doesn't draw it at 2×.
+            content.contentsScale = NSScreen.screens.first?.backingScaleFactor ?? 2
+            CATransaction.commit()
+        }
     }
 
-    private static let duration = 0.38
-    // Eases in and lands softly, close to a Spaces swipe.
-    private static let timing = CAMediaTimingFunction(controlPoints: 0.3, 0, 0.15, 1)
+    /// Critically damped spring: starts gently, lands without a long tail.
+    private func spring(_ keyPath: String, from: Any, to: Any) -> CASpringAnimation {
+        let animation = CASpringAnimation(keyPath: keyPath)
+        animation.mass = 1
+        animation.stiffness = 260
+        animation.damping = 32
+        animation.initialVelocity = 0
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = animation.settlingDuration
+        return animation
+    }
 
-    private func run(_ overlay: NSPanel, old: CALayer, new: CALayer, travellers: [(CALayer, CGRect)], width: CGFloat, forward: Bool) {
+    /// One animation on the cover finished; lift it after the last one.
+    private func finished(_ overlay: NSPanel) {
+        playing -= 1
+        guard playing <= 0 else { return }
+        playing = 0
+        overlay.orderOut(nil)
+        overlay.contentView?.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
+    }
+
+    private func slideStages(_ overlay: NSPanel, old: CALayer, new: CALayer, width: CGFloat, forward: Bool) {
         guard let root = overlay.contentView?.layer else {
             fadeOut(overlay)
             return
@@ -170,40 +229,43 @@ final class StageMotion {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         new.position.x += shift
-        // Below the travellers, above the old stage.
+        // Below any carried window, above the old stage.
         root.insertSublayer(new, above: old)
         CATransaction.commit()
 
         // Explicit animations: AppKit turns implicit ones off for layers
         // inside a view, so changing a property alone would just jump.
         CATransaction.begin()
-        CATransaction.setCompletionBlock {
-            MainActor.assumeIsolated {
-                overlay.orderOut(nil)
-                root.sublayers?.forEach { $0.removeFromSuperlayer() }
-            }
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated { self?.finished(overlay) }
         }
         for layer in [old, new] {
-            animate(layer, "position.x", from: layer.position.x, to: layer.position.x - shift)
-            layer.position.x -= shift
-        }
-        for (layer, target) in travellers {
-            let center = CGPoint(x: target.midX, y: target.midY)
-            animate(layer, "position", from: NSValue(point: layer.position), to: NSValue(point: center))
-            animate(layer, "bounds.size", from: NSValue(size: layer.bounds.size), to: NSValue(size: target.size))
-            layer.position = center
-            layer.bounds.size = target.size
+            let to = layer.position.x - shift
+            layer.add(spring("position.x", from: layer.position.x, to: to), forKey: "slide")
+            layer.position.x = to
         }
         CATransaction.commit()
     }
 
-    private func animate(_ layer: CALayer, _ keyPath: String, from: Any, to: Any) {
-        let animation = CABasicAnimation(keyPath: keyPath)
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = Self.duration
-        animation.timingFunction = Self.timing
-        layer.add(animation, forKey: keyPath)
+    private func moveTravellers(_ overlay: NSPanel, _ travellers: [(WindowLayer, CGRect)]) {
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated { self?.finished(overlay) }
+        }
+        for (window, target) in travellers {
+            let center = CGPoint(x: target.midX, y: target.midY)
+            let size = CGRect(origin: .zero, size: target.size)
+            let inner = CGPoint(x: size.midX, y: size.midY)
+            window.container.add(spring("position", from: NSValue(point: window.container.position), to: NSValue(point: center)), forKey: "move")
+            window.container.add(spring("bounds", from: NSValue(rect: window.container.bounds), to: NSValue(rect: size)), forKey: "size")
+            window.content.add(spring("bounds", from: NSValue(rect: window.content.bounds), to: NSValue(rect: size)), forKey: "size")
+            window.content.add(spring("position", from: NSValue(point: window.content.position), to: NSValue(point: inner)), forKey: "move")
+            window.container.position = center
+            window.container.bounds = size
+            window.content.bounds = size
+            window.content.position = inner
+        }
+        CATransaction.commit()
     }
 
     private func fadeOut(_ overlay: NSPanel) {

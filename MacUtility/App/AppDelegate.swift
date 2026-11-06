@@ -52,6 +52,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 actions.focus.armLeader()
             }
         }
+        if UserDefaults.standard.bool(forKey: "testFocusCarry") {
+            Task {
+                let focus = actions.focus
+                try? await Task.sleep(for: .seconds(2))
+                focus.goTo(1)
+                try? await Task.sleep(for: .seconds(1))
+                focus.split(.vertical)
+                try? await Task.sleep(for: .seconds(0.5))
+                if let from = focus.state.occupied.first(where: { $0 != 1 }),
+                   let other = focus.state[set: from].windows.first {
+                    focus.split(with: other)
+                }
+                try? await Task.sleep(for: .seconds(1.5))
+                if let empty = focus.state.lowestEmpty(excluding: 1) { focus.send(to: empty) }
+            }
+        }
         if UserDefaults.standard.bool(forKey: "testFocusSplit") {
             Task {
                 try? await Task.sleep(for: .seconds(2))
