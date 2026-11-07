@@ -44,6 +44,7 @@ final class FocusController {
     @ObservationIgnored private lazy var replacer = ReplacePanel(controller: self)
     @ObservationIgnored private lazy var shelf = ShelfPanel(controller: self)
     @ObservationIgnored private lazy var motion = StageMotion()
+    @ObservationIgnored private lazy var statusItem = SetsStatusItem(controller: self)
 
     @ObservationIgnored private var homes: [WindowID: CGRect] = [:]
     @ObservationIgnored private var parked: Set<WindowID> = []
@@ -157,6 +158,7 @@ final class FocusController {
         isRunning = true
         adoptAll()
         shelf.startWatchingPointer()
+        statusItem.show()
         startTrackpad()
         apply(focus: true)
         log.notice("focus started with \(self.state.allWindows.count) windows")
@@ -178,6 +180,7 @@ final class FocusController {
         shelf.hide()
         TrackpadSwipe.shared.stop()
         trackpadFingers = 0
+        statusItem.hide()
         let fallback = layout.single
         for id in state.allWindows where parked.contains(id) {
             guard let window = registry.windows[id], let size = window.frame?.size else { continue }
@@ -266,6 +269,7 @@ final class FocusController {
     /// everything else parked. `focus` raises the set's focused window.
     func apply(focus: Bool = true) {
         guard isRunning else { return }
+        log.debug("trace apply focus \(focus) current \(self.state.current)")
         let set = state.currentSet
         appliedWidthCap = Self.widthCap
         appliedGap = Self.gap
@@ -344,19 +348,14 @@ final class FocusController {
 
     /// Switch sets with a Spaces-style slide (skipped with Reduce Motion or
     /// no Screen Recording). The snapshot also feeds the cards' thumbnails.
-    private func transition(to number: Int, carrying carried: [StageMotion.Carried] = [], _ change: @escaping () -> Void) {
-        let visible = stageFrames()
+    /// Switch sets behind the switch animation (a short fade, or none).
+    private func transition(to number: Int, _ change: @escaping () -> Void) {
+        log.debug("trace transition to \(number) from \(self.state.current)")
         guard let display else {
             change()
             return
         }
-        // Where the new set's windows will land, back to front.
-        let target = state[set: number]
-        let targetFrames = layout.frames(for: target)
-        let incoming = target.windows
-            .sorted { a, _ in a != target.focused }
-            .compactMap { id in targetFrames[id].map { (id: id, frame: cocoa($0)) } }
-        motion.slide(on: display, forward: number > state.current, outgoing: visible.mapValues(cocoa), incoming: incoming, carried: carried) { [weak self] shots in
+        motion.transition(on: display, outgoing: stageFrames().mapValues(cocoa)) { [weak self] shots in
             guard let self else { return }
             for (id, image) in shots { self.thumbnails[id] = image }
             change()
@@ -464,6 +463,7 @@ final class FocusController {
     }
 
     private func focusChanged(_ id: WindowID) {
+        log.debug("trace focus \(id) muted \(Date() <= self.focusMutedUntil) set \(self.state.setNumber(of: id) ?? -1) current \(self.state.current)")
         guard Date() > focusMutedUntil, state.contains(id) else { return }
         let changed = state.focus(id)
         if changed {
@@ -537,16 +537,11 @@ final class FocusController {
     func send(to number: Int) {
         guard isRunning, StageState.numbers.contains(number), number != state.current,
               let id = focusedWindow() else { return }
-        let from = stageFrames()[id]
         state.send(id, to: number)
         state[set: number].focused = id
         zoomed = nil
         openSplit = nil
-        // The window travels to its place in the new set while the sets slide.
-        let carried = from.flatMap { from in
-            layout.frames(for: state[set: number])[id].map { StageMotion.Carried(id: id, from: cocoa(from), to: cocoa($0)) }
-        }
-        transition(to: number, carrying: carried.map { [$0] } ?? []) { [weak self] in
+        transition(to: number) { [weak self] in
             guard let self else { return }
             self.state.goTo(number)
             self.apply()
@@ -754,6 +749,12 @@ final class FocusController {
     }
 
     // MARK: Panels
+
+    #if DEBUG
+    func debugFreeze() {
+        if let display { motion.debugFreeze(on: display) }
+    }
+    #endif
 
     func armLeader() {
         guard isRunning else { return }

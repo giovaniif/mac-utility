@@ -18,6 +18,9 @@ final class FocusKeyPanel: NSPanel {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        // Focus animates its panels itself; the system's own appear
+        // animation would scale them on top of that.
+        panel.animationBehavior = .none
         return panel
     }
 }
@@ -484,33 +487,3 @@ struct SetPreview: View {
     }
 }
 
-/// Menu bar image: the numbers of sets with windows, current one filled.
-enum SetsMenuBarImage {
-    static func make(occupied: [Int], current: Int) -> NSImage {
-        let cell: CGFloat = 15
-        let spacing: CGFloat = 2
-        let width = CGFloat(max(occupied.count, 1)) * (cell + spacing) - spacing
-        let image = NSImage(size: NSSize(width: width, height: 16), flipped: false) { _ in
-            let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-            for (index, number) in occupied.enumerated() {
-                let rect = CGRect(x: CGFloat(index) * (cell + spacing), y: 0.5, width: cell, height: 15)
-                let text = NSAttributedString(string: "\(number)", attributes: [.font: font, .foregroundColor: NSColor.black])
-                let size = text.size()
-                let point = CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2)
-                if number == current {
-                    NSColor.black.setFill()
-                    NSBezierPath(roundedRect: rect, xRadius: 3.5, yRadius: 3.5).fill()
-                    // Knock the digit out of the filled square.
-                    NSGraphicsContext.current?.cgContext.setBlendMode(.destinationOut)
-                    text.draw(at: point)
-                    NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
-                } else {
-                    text.draw(at: point)
-                }
-            }
-            return true
-        }
-        image.isTemplate = true
-        return image
-    }
-}

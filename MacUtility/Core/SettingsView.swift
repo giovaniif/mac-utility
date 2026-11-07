@@ -120,6 +120,7 @@ private struct FocusSettings: View {
     @AppStorage("focus.widthCap") private var widthCap = 1440.0
     @AppStorage("focus.gap") private var gap = 12.0
     @AppStorage("focus.trackpadFingers") private var trackpadFingers = 3
+    @AppStorage("focus.animation") private var animation = SwitchAnimation.fade.rawValue
 
     var body: some View {
         Section("Focus") {
@@ -129,6 +130,10 @@ private struct FocusSettings: View {
                 Text("Stands in for Mission Control, which can't show parked windows well. For ⌃↑ to reach Focus, turn off Mission Control's ⌃↑ in System Settings → Keyboard → Keyboard Shortcuts → Mission Control.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Picker("Switch animation", selection: $animation) {
+                Text("Fade").tag(SwitchAnimation.fade.rawValue)
+                Text("None").tag(SwitchAnimation.none.rawValue)
             }
             VStack(alignment: .leading) {
                 Picker("Trackpad swipe up", selection: $trackpadFingers) {

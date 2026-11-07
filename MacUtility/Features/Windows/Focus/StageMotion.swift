@@ -4,22 +4,29 @@ import os
 
 private let motionLog = Logger(subsystem: "com.giovani.MacUtility", category: "focus")
 
-/// Set switches slide like Spaces. A still of the old stage covers the
-/// display while the real windows move underneath; a picture of the new
-/// stage, built from captures of its own windows laid over the wallpaper,
-/// slides in from the side as the old one slides out. The menu bar stays put.
-///
-/// The new stage isn't captured from the screen: right after the windows
-/// move, the screen still shows the old ones for a while, so a capture would
-/// slide the old stage in and leave it lingering when the cover lifts.
+/// How a set switch looks.
+enum SwitchAnimation: String, CaseIterable {
+    /// The old stage stays frozen on screen while the windows move, then fades out.
+    case fade
+    /// Windows just move.
+    case none
+
+    static var current: SwitchAnimation {
+        UserDefaults.standard.string(forKey: "focus.animation").flatMap(SwitchAnimation.init) ?? .fade
+    }
+}
+
+/// Set switches, kept as simple as possible: freeze the screen as it is, move
+/// the real windows underneath, give the apps a moment to redraw, then fade
+/// the frozen picture out. Nothing on screen is ever a picture of where a
+/// window is going, so nothing can disagree with the real screen when the
+/// picture goes away. (A Spaces-style slide was tried first; every way of
+/// faking the incoming stage left a visible snap or flick at the end.)
 @MainActor
 final class StageMotion {
     private var overlay: NSPanel?
-    /// Animations still playing on the cover; it lifts when the last ends.
-    private var playing = 0
     private var filter: (filter: SCContentFilter, displayID: CGDirectDisplayID, at: Date)?
     private var content: (content: SCShareableContent, at: Date)?
-    private var wallpaper: (image: CGImage, displayID: CGDirectDisplayID, at: Date)?
 
     /// Starts listing windows ahead of a switch (on the leader key), so the
     /// switch itself doesn't wait for it.
@@ -28,257 +35,90 @@ final class StageMotion {
         Task { _ = await shareableContent() }
     }
 
-    /// A window that moves to the new set with you: it travels from `from`
-    /// to `to` above both stages instead of sliding with either.
-    struct Carried {
-        let id: WindowID
-        let from: CGRect
-        let to: CGRect
-    }
-
-    /// `outgoing` are the visible windows now (Cocoa frames), for card
-    /// thumbnails; `incoming` the new set's windows at their target frames,
-    /// back to front; `carried` windows going along (leader ⇧1–9).
-    func slide(
-        on screen: NSScreen,
-        forward: Bool,
-        outgoing: [WindowID: CGRect],
-        incoming: [(id: WindowID, frame: CGRect)],
-        carried: [Carried] = [],
-        then change: @escaping ([WindowID: NSImage]) -> Void
-    ) {
-        // A switch while the last one is still moving: the cover is up already.
+    /// Runs `change` (which moves the windows) behind the switch animation.
+    /// `outgoing` are the visible windows now (Cocoa frames); the frozen
+    /// picture also gives their cards a thumbnail.
+    func transition(on screen: NSScreen, outgoing: [WindowID: CGRect], then change: @escaping ([WindowID: NSImage]) -> Void) {
+        // A switch while the last one is still fading: just move the windows.
         if let overlay, overlay.isVisible {
             change([:])
             return
         }
-        guard CGPreflightScreenCaptureAccess() else {
+        guard SwitchAnimation.current == .fade, CGPreflightScreenCaptureAccess(),
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             change([:])
             return
         }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let carriedIDs = Set(carried.map(\.id))
-        // Carrying a window means the old stage is drawn without it, so it's
-        // built from window captures too, rather than taken from the screen.
-        let staying = outgoing.filter { !carriedIDs.contains($0.key) }.map { (id: $0.key, frame: $0.value) }
-        let captureIDs = incoming.map(\.id) + carried.map(\.id) + (carried.isEmpty ? [] : staying.map(\.id))
         Task {
-            // Main-actor tasks, so the captures overlap while they wait.
-            let windowShots = Task { await self.windowImages(captureIDs) }
-            let wallpaperShot = Task { await self.wallpaperImage(for: screen) }
-            let area = stageArea(of: screen)
-            let local = { (rect: CGRect) in rect.offsetBy(dx: -area.minX, dy: -area.minY) }
-            var thumbnails: [WindowID: NSImage] = [:]
-            let oldStage: CALayer
-            if carried.isEmpty {
-                guard let before = await capture(screen) else {
-                    change([:])
-                    return
-                }
-                thumbnails = crops(of: before, screen: screen, windows: outgoing).mapValues { Self.thumbnail($0) }
-                oldStage = CALayer()
-                oldStage.frame = CGRect(origin: .zero, size: area.size)
-                oldStage.contents = stage(of: before, screen: screen)
-                oldStage.contentsGravity = .resize
-            } else {
-                let images = await windowShots.value
-                oldStage = stageLayer(area: area, screen: screen, wallpaper: await wallpaperShot.value, windows: staying, images: images)
-            }
-            guard !reduceMotion else {
-                change(thumbnails)
+            guard let before = await capture(screen) else {
+                change([:])
                 return
             }
-            var images = await windowShots.value
-            let backdrop = await wallpaperShot.value
-            // The carried window sits above the old stage from the start,
-            // where it is now, so nothing changes on screen when the cover goes up.
-            let travellers = carried.compactMap { item -> (WindowLayer, Carried)? in
-                guard let image = images[item.id] else { return nil }
-                return (WindowLayer(image, frame: local(item.from)), item)
-            }
-            let newStage = stageLayer(
-                area: area, screen: screen, wallpaper: backdrop,
-                windows: incoming.filter { !carriedIDs.contains($0.id) }, images: images
-            )
-            let overlay = showOverlay(oldStage, above: travellers.map(\.0.container), area: area)
+            let thumbnails = crops(of: before, screen: screen, windows: outgoing).mapValues { Self.thumbnail($0) }
+            let overlay = showOverlay(before, on: screen)
+            // The picture has to be on screen before any window moves.
             CATransaction.flush()
             try? await Task.sleep(for: .milliseconds(16))
-            for (id, image) in images { thumbnails[id] = Self.thumbnail(image) }
-
-            // Start the slide before any window moves. The animation runs in
-            // the window server, so the Accessibility calls that move windows
-            // (they block the main thread for 50–150 ms) can't stall it, and
-            // the windows settle under the cover meanwhile.
-            playing = travellers.isEmpty ? 1 : 2
-            slideStages(overlay, old: oldStage, new: newStage, width: area.width, forward: forward)
-            CATransaction.flush()
             change(thumbnails)
-            guard !travellers.isEmpty else { return }
-            // A carried window changes size. It holds still while the sets
-            // slide; once the app has laid itself out at the new size, it's
-            // captured again and grows or shrinks into place like a live
-            // resize, instead of stretching the old picture.
-            try? await Task.sleep(for: .milliseconds(60))
-            content = nil
-            let resized = await windowImages(carried.map(\.id))
-            for (layer, item) in travellers {
-                if let image = resized[item.id] {
-                    images[item.id] = image
-                    layer.setImage(image)
+            // Let the apps redraw at their new place before revealing them.
+            try? await Task.sleep(for: .milliseconds(80))
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.14
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                overlay.animator().alphaValue = 0
+            } completionHandler: {
+                MainActor.assumeIsolated {
+                    overlay.orderOut(nil)
+                    overlay.alphaValue = 1
                 }
             }
-            moveTravellers(overlay, travellers.map { ($0.0, local($0.1.to)) })
         }
     }
 
-    /// The display below the menu bar, in Cocoa coordinates.
-    private func stageArea(of screen: NSScreen) -> CGRect {
+    #if DEBUG
+    /// Shows the frozen picture for a few seconds without moving anything.
+    func debugFreeze(on screen: NSScreen) {
+        Task {
+            guard let before = await capture(screen) else { return }
+            let overlay = showOverlay(before, on: screen)
+            motionLog.notice("freeze: panel \(overlay.frame.debugDescription), view \(overlay.contentView?.frame.debugDescription ?? "-"), layer \(overlay.contentView?.layer?.bounds.debugDescription ?? "-") scale \(overlay.contentView?.layer?.contentsScale ?? 0) gravity \(overlay.contentView?.layer?.contentsGravity.rawValue ?? "-") image \(before.width)x\(before.height) screen \(screen.frame.debugDescription) visible \(screen.visibleFrame.debugDescription)")
+            try? await Task.sleep(for: .seconds(3))
+            overlay.orderOut(nil)
+        }
+    }
+    #endif
+
+    /// The part of the display below the menu bar, so the menu bar stays live.
+    private func showOverlay(_ image: CGImage, on screen: NSScreen) -> NSPanel {
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
-        return CGRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: screen.frame.height - menuBar)
-    }
-
-    /// The part of a display capture below the menu bar.
-    private func stage(of image: CGImage, screen: NSScreen) -> CGImage? {
+        let area = CGRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: screen.frame.height - menuBar)
         let scale = CGFloat(image.width) / screen.frame.width
-        let menuBar = (screen.frame.maxY - screen.visibleFrame.maxY) * scale
-        return image.cropping(to: CGRect(x: 0, y: menuBar, width: CGFloat(image.width), height: CGFloat(image.height) - menuBar).integral)
-    }
+        let below = image.cropping(to: CGRect(x: 0, y: menuBar * scale, width: CGFloat(image.width), height: CGFloat(image.height) - menuBar * scale).integral)
 
-    /// The new stage as layers: wallpaper, then each window where it's going.
-    private func stageLayer(area: CGRect, screen: NSScreen, wallpaper: CGImage?, windows: [(id: WindowID, frame: CGRect)], images: [WindowID: CGImage]) -> CALayer {
-        let root = CALayer()
-        root.frame = CGRect(origin: .zero, size: area.size)
-        root.backgroundColor = NSColor.black.cgColor
-        if let wallpaper {
-            let backdrop = CALayer()
-            // The wallpaper covers the whole display; the menu bar strip is cut off.
-            backdrop.frame = CGRect(x: screen.frame.minX - area.minX, y: screen.frame.minY - area.minY, width: screen.frame.width, height: screen.frame.height)
-            backdrop.contents = wallpaper
-            backdrop.contentsGravity = .resizeAspectFill
-            root.addSublayer(backdrop)
-        }
-        for window in windows {
-            guard let image = images[window.id] else { continue }
-            root.addSublayer(WindowLayer(image, frame: window.frame.offsetBy(dx: -area.minX, dy: -area.minY)).container)
-        }
-        return root
-    }
-
-    /// A captured window: a shadow-casting container and a clipped picture
-    /// pinned to its top-left. The picture is never stretched; if the box and
-    /// the picture differ, the box clips it, the way a window's content
-    /// behaves while the window resizes.
-    @MainActor
-    final class WindowLayer {
-        let container = CALayer()
-        let content = CALayer()
-
-        init(_ image: CGImage, frame: CGRect) {
-            container.frame = frame
-            container.shadowColor = NSColor.black.cgColor
-            container.shadowOpacity = 0.32
-            container.shadowRadius = 20
-            container.shadowOffset = CGSize(width: 0, height: -10)
-            content.frame = CGRect(origin: .zero, size: frame.size)
-            content.masksToBounds = true
-            content.cornerRadius = 12
-            content.cornerCurve = .continuous
-            content.contentsGravity = .topLeft
-            setImage(image)
-            container.addSublayer(content)
-        }
-
-        func setImage(_ image: CGImage) {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            content.contents = image
-            // Pixel-for-point on Retina, so .topLeft doesn't draw it at 2×.
-            content.contentsScale = NSScreen.screens.first?.backingScaleFactor ?? 2
-            CATransaction.commit()
-        }
-    }
-
-    /// Critically damped spring: starts gently, lands without a long tail.
-    private func spring(_ keyPath: String, from: Any, to: Any) -> CASpringAnimation {
-        let animation = CASpringAnimation(keyPath: keyPath)
-        animation.mass = 1
-        animation.stiffness = 260
-        animation.damping = 32
-        animation.initialVelocity = 0
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = animation.settlingDuration
-        return animation
-    }
-
-    /// One animation on the cover finished; lift it after the last one.
-    private func finished(_ overlay: NSPanel) {
-        playing -= 1
-        guard playing <= 0 else { return }
-        playing = 0
-        overlay.orderOut(nil)
-        overlay.contentView?.layer?.sublayers?.forEach { $0.removeFromSuperlayer() }
-    }
-
-    private func slideStages(_ overlay: NSPanel, old: CALayer, new: CALayer, width: CGFloat, forward: Bool) {
-        guard let root = overlay.contentView?.layer else {
-            fadeOut(overlay)
-            return
-        }
-        let shift = forward ? width : -width
+        let panel = overlay ?? NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        panel.isOpaque = true
+        panel.backgroundColor = .black
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        // No system "pop in" when it appears: it scaled the frozen picture
+        // down and back up, which read as the screen shrinking on each switch.
+        panel.animationBehavior = .none
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue - 1)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        let view = panel.contentView ?? NSView()
+        view.wantsLayer = true
+        panel.contentView = view
+        panel.setFrame(area, display: false)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        new.position.x += shift
-        // Below any carried window, above the old stage.
-        root.insertSublayer(new, above: old)
+        view.layer?.contents = below
+        view.layer?.contentsGravity = .resize
         CATransaction.commit()
-
-        // Explicit animations: AppKit turns implicit ones off for layers
-        // inside a view, so changing a property alone would just jump.
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            MainActor.assumeIsolated { self?.finished(overlay) }
-        }
-        for layer in [old, new] {
-            let to = layer.position.x - shift
-            layer.add(spring("position.x", from: layer.position.x, to: to), forKey: "slide")
-            layer.position.x = to
-        }
-        CATransaction.commit()
-    }
-
-    private func moveTravellers(_ overlay: NSPanel, _ travellers: [(WindowLayer, CGRect)]) {
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            MainActor.assumeIsolated { self?.finished(overlay) }
-        }
-        for (window, target) in travellers {
-            let center = CGPoint(x: target.midX, y: target.midY)
-            let size = CGRect(origin: .zero, size: target.size)
-            let inner = CGPoint(x: size.midX, y: size.midY)
-            window.container.add(spring("position", from: NSValue(point: window.container.position), to: NSValue(point: center)), forKey: "move")
-            window.container.add(spring("bounds", from: NSValue(rect: window.container.bounds), to: NSValue(rect: size)), forKey: "size")
-            window.content.add(spring("bounds", from: NSValue(rect: window.content.bounds), to: NSValue(rect: size)), forKey: "size")
-            window.content.add(spring("position", from: NSValue(point: window.content.position), to: NSValue(point: inner)), forKey: "move")
-            window.container.position = center
-            window.container.bounds = size
-            window.content.bounds = size
-            window.content.position = inner
-        }
-        CATransaction.commit()
-    }
-
-    private func fadeOut(_ overlay: NSPanel) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            overlay.animator().alphaValue = 0
-        } completionHandler: {
-            MainActor.assumeIsolated {
-                overlay.orderOut(nil)
-                overlay.alphaValue = 1
-            }
-        }
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
+        panel.display()
+        overlay = panel
+        return panel
     }
 
     // MARK: Captures
@@ -291,56 +131,8 @@ final class StageMotion {
         return fresh
     }
 
-    /// Full-resolution captures of single windows, wherever they are (parked
-    /// ones included), without their shadows.
-    private func windowImages(_ ids: [WindowID]) async -> [WindowID: CGImage] {
-        guard !ids.isEmpty, var listed = await shareableContent() else { return [:] }
-        if ids.contains(where: { id in !listed.windows.contains { $0.windowID == id } }) {
-            // A window newer than the cached list: list again.
-            content = nil
-            guard let fresh = await shareableContent() else { return [:] }
-            listed = fresh
-        }
-        let scale = NSScreen.screens.first?.backingScaleFactor ?? 2
-        // All at once: each capture mostly waits on the window server.
-        let captures = ids.compactMap { id -> (WindowID, Task<CGImage?, Never>)? in
-            guard let window = listed.windows.first(where: { $0.windowID == id }), window.frame.width > 0 else { return nil }
-            let config = SCStreamConfiguration()
-            config.width = Int(window.frame.width * scale)
-            config.height = Int(window.frame.height * scale)
-            config.showsCursor = false
-            config.ignoreShadowsSingleWindow = true
-            let filter = SCContentFilter(desktopIndependentWindow: window)
-            return (id, Task { try? await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) })
-        }
-        var images: [WindowID: CGImage] = [:]
-        for (id, capture) in captures {
-            if let image = await capture.value { images[id] = image }
-        }
-        return images
-    }
-
-    /// The desktop picture alone: the display's windows below normal level.
-    /// Kept for five minutes.
-    private func wallpaperImage(for screen: NSScreen) async -> CGImage? {
-        guard let displayID = screen.displayID else { return nil }
-        if let wallpaper, wallpaper.displayID == displayID, Date().timeIntervalSince(wallpaper.at) < 300 { return wallpaper.image }
-        guard let listed = await shareableContent(),
-              let display = listed.displays.first(where: { $0.displayID == displayID }) else { return nil }
-        let desktop = listed.windows.filter { $0.windowLayer < 0 && $0.frame.intersects(display.frame) }
-        guard !desktop.isEmpty else { return nil }
-        // 1× is plenty: it's only on screen while it slides, and it's cached.
-        let config = SCStreamConfiguration()
-        config.width = Int(screen.frame.width)
-        config.height = Int(screen.frame.height)
-        config.showsCursor = false
-        guard let image = try? await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(display: display, including: desktop), configuration: config) else { return nil }
-        wallpaper = (image, displayID, Date())
-        return image
-    }
-
-    /// Captures each window on its own, wherever it is, small enough for a
-    /// card. Calls `deliver` as each one arrives so cards fill in one by one.
+    /// Captures each window on its own, wherever it is (parked ones too),
+    /// small enough for a card. Calls `deliver` as each one arrives.
     func snapshots(of ids: [WindowID], deliver: @escaping (WindowID, NSImage) -> Void) {
         guard CGPreflightScreenCaptureAccess(), !ids.isEmpty else { return }
         Task {
@@ -362,6 +154,7 @@ final class StageMotion {
         }
     }
 
+    /// The whole display, minus Focus's own panels.
     private func capture(_ screen: NSScreen) async -> CGImage? {
         guard let displayID = screen.displayID else { return nil }
         do {
@@ -370,6 +163,9 @@ final class StageMotion {
             config.width = Int(screen.frame.width * screen.backingScaleFactor)
             config.height = Int(screen.frame.height * screen.backingScaleFactor)
             config.showsCursor = false
+            // Keep window shadows, so the frozen picture matches the screen.
+            config.ignoreShadowsDisplay = false
+            config.capturesShadowsOnly = false
             return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
         } catch {
             motionLog.error("capture failed: \(error.localizedDescription)")
@@ -377,7 +173,7 @@ final class StageMotion {
         }
     }
 
-    /// The display minus our own panels. Kept for a minute.
+    /// Kept for a minute: listing shareable content is slow.
     private func contentFilter(for displayID: CGDirectDisplayID) async throws -> SCContentFilter {
         if let filter, filter.displayID == displayID, Date().timeIntervalSince(filter.at) < 60 {
             return filter.filter
@@ -420,33 +216,5 @@ final class StageMotion {
             if let cropped = image.cropping(to: pixels) { shots[id] = cropped }
         }
         return shots
-    }
-
-    private func showOverlay(_ base: CALayer, above: [CALayer], area: CGRect) -> NSPanel {
-        let panel = overlay ?? NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
-        panel.isOpaque = true
-        panel.backgroundColor = .black
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue - 1)
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
-        let view = panel.contentView ?? NSView()
-        view.wantsLayer = true
-        panel.contentView = view
-        panel.setFrame(area, display: false)
-        // Layer contents go straight to the window server, no redraw pass.
-        let root = view.layer!
-        root.masksToBounds = true
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        root.sublayers?.forEach { $0.removeFromSuperlayer() }
-        root.addSublayer(base)
-        above.forEach(root.addSublayer)
-        CATransaction.commit()
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
-        panel.display()
-        overlay = panel
-        return panel
     }
 }

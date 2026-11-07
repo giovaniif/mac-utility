@@ -65,6 +65,7 @@ One display, one stage. The screen shows one set of up to two windows; everythin
 - Pause after `⌃B` for a key guide. `⌃B` twice sends `⌃B` to the app, so tmux and text fields still get it.
 - Push the pointer to the left edge for a shelf of the other sets.
 - A new window joins the current set if it has room, otherwise it opens the next empty set and takes you there.
+- Switching sets fades by default; Settings → Focus can turn the animation off.
 - On a wide display a lone window stops at 1,440 pt and centers. That width and the 12 pt gap between windows are both in Settings.
 - Switching off Focus or quitting the app brings every parked window back. If the app crashes, the next launch does.
 

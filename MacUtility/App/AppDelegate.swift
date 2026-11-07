@@ -52,6 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 actions.focus.armLeader()
             }
         }
+        if UserDefaults.standard.bool(forKey: "testFocusFreeze") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.debugFreeze()
+            }
+        }
         if UserDefaults.standard.bool(forKey: "testFocusCarry") {
             Task {
                 let focus = actions.focus

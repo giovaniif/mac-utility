@@ -69,18 +69,12 @@ struct MenuBarContent: View {
     }
 }
 
-/// The wrench, or while Focus runs, the numbers of the sets with windows.
+/// Mac Utility's own icon. Focus shows its sets in a separate item.
 struct MenuBarLabel: View {
     let focus: FocusController
 
     var body: some View {
-        let occupied = focus.state.occupied
-        if focus.isRunning, !occupied.isEmpty {
-            Image(nsImage: SetsMenuBarImage.make(occupied: occupied, current: focus.state.current))
-                .accessibilityLabel("Mac Utility, Focus set \(focus.state.current)")
-        } else {
-            Image(systemName: "wrench.and.screwdriver")
-                .accessibilityLabel("Mac Utility")
-        }
+        Image(systemName: "wrench.and.screwdriver")
+            .accessibilityLabel("Mac Utility")
     }
 }
