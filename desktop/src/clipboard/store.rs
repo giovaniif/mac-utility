@@ -1,6 +1,3 @@
-// delete, toggle_pin, touch and search are used once the panel lands.
-#![allow(dead_code)]
-
 use super::item::{now, ClipboardItem, Kind};
 use anyhow::Result;
 use rusqlite::{params, Connection, Row};
