@@ -5,3 +5,4 @@ DerivedData/
 build-cleaning/
 build-release/
 *.dmg
+desktop/target/
