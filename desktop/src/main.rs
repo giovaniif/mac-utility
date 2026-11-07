@@ -8,6 +8,7 @@ mod feature;
 mod settings;
 mod shortcut_label;
 mod tray;
+mod windows;
 
 use eframe::egui;
 
@@ -15,6 +16,8 @@ use eframe::egui;
 fn features() -> Vec<Box<dyn feature::Feature>> {
     vec![
         Box::new(clipboard::ClipboardFeature::new()),
+        Box::new(windows::MoveDisplayFeature::new()),
+        Box::new(windows::FocusFeature::new()),
     ]
 }
 
