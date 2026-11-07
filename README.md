@@ -147,7 +147,7 @@ Built with [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts
 
 `desktop/` is a Rust port of every feature for Windows and Linux. The Swift app above stays the macOS version.
 
-- Build: `cd desktop && cargo build --release`. Linux needs `libgtk-3-dev libxdo-dev libayatana-appindicator3-dev`.
+- Build: `cd desktop && cargo build --release`. Linux needs `libgtk-3-dev libxdo-dev libayatana-appindicator3-dev libpipewire-0.3-dev libclang-dev libgbm-dev libegl-dev libwayland-dev libxcb1-dev libxrandr-dev libdbus-1-dev`.
 - Screen recording needs `ffmpeg` on the PATH.
 - Shortcuts use Ctrl where macOS uses ⌘ (Ctrl+Shift+V, Ctrl+Shift+3/4/5, Ctrl+Alt+Win+K, Ctrl+Win+←/→, Ctrl+B). All can be changed in `settings.json`.
 - Linux works fully on X11. On Wayland, keyboard cleaning, area capture, recording and window management show a notice instead, and pasting from history copies without sending Ctrl+V.
