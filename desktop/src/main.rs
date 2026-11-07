@@ -11,6 +11,7 @@ mod recording;
 mod settings;
 mod shortcut_label;
 mod tray;
+mod windows;
 
 use eframe::egui;
 
@@ -21,6 +22,8 @@ fn features() -> Vec<Box<dyn feature::Feature>> {
         Box::new(clipboard::ClipboardFeature::new()),
         Box::new(capture::CaptureFeature::new()),
         Box::new(recording::RecordingFeature::new()),
+        Box::new(windows::MoveDisplayFeature::new()),
+        Box::new(windows::FocusFeature::new()),
     ]
 }
 
