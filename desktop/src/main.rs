@@ -3,6 +3,7 @@
 
 mod app;
 mod autostart;
+mod capture;
 mod clipboard;
 mod feature;
 mod keyboard_clean;
@@ -17,6 +18,7 @@ fn features() -> Vec<Box<dyn feature::Feature>> {
     vec![
         Box::new(keyboard_clean::KeyboardCleanFeature::new()),
         Box::new(clipboard::ClipboardFeature::new()),
+        Box::new(capture::CaptureFeature::new()),
     ]
 }
 
