@@ -254,17 +254,50 @@ private struct SwitcherCard: View {
 
 // MARK: - Replace
 
+/// An installed app, for search in the picker.
+struct InstalledApp: Sendable {
+    let name: String
+    let url: URL
+
+    /// /Applications, /System/Applications and ~/Applications, one folder
+    /// level deep (Utilities and the like). Read off the main thread.
+    static func scan() async -> [InstalledApp] {
+        await Task.detached(priority: .userInitiated) {
+            let fm = FileManager.default
+            let roots = ["/Applications", "/System/Applications", "/System/Applications/Utilities", NSHomeDirectory() + "/Applications"]
+                .map(URL.init(fileURLWithPath:))
+            var apps: [String: InstalledApp] = [:]
+            func add(_ url: URL) {
+                let name = url.deletingPathExtension().lastPathComponent
+                if apps[name] == nil { apps[name] = InstalledApp(name: name, url: url) }
+            }
+            for root in roots {
+                for url in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+                    if url.pathExtension == "app" {
+                        add(url)
+                    } else if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                        for inner in (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [] where inner.pathExtension == "app" {
+                            add(inner)
+                        }
+                    }
+                }
+            }
+            return apps.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }.value
+    }
+}
+
 @MainActor
 @Observable
 final class ReplaceModel {
     enum Item: Identifiable {
         case window(WindowSummary, set: Int)
-        case app(name: String, url: URL, icon: NSImage?)
+        case app(name: String, url: URL, icon: NSImage?, running: Bool)
 
         var id: String {
             switch self {
             case let .window(window, _): "w\(window.id)"
-            case let .app(_, url, _): url.path
+            case let .app(_, url, _, _): url.path
             }
         }
     }
@@ -272,25 +305,50 @@ final class ReplaceModel {
     enum Mode: Equatable {
         case replace
         case split(SplitAxis)
+        /// An empty set: the chosen window or app opens on the stage.
+        case open
     }
 
     var mode = Mode.replace
     var selection = 0
     /// The window being replaced, or the one the new pane opens beside.
     var replacing: WindowSummary?
-    var items: [Item] = []
+    /// Windows in other sets and running apps without one, shown before searching.
+    var suggestions: [Item] = []
+    var installed: [InstalledApp] = []
+    /// `/` turns the list into a search over windows and every installed app.
+    var searching = false
+    var query = ""
     /// Drives the open and close motion; the panel itself stays opaque.
     var isPresented = false
 
+    var items: [Item] {
+        let query = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard searching, !query.isEmpty else { return suggestions }
+        let windows = suggestions.filter {
+            guard case let .window(window, _) = $0 else { return false }
+            return "\(window.appName) \(window.title)".lowercased().contains(query)
+        }
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleURL?.standardizedFileURL.path })
+        let apps = installed
+            .filter { $0.name.lowercased().contains(query) }
+            // Names that start with the query first.
+            .sorted { ($0.name.lowercased().hasPrefix(query) ? 0 : 1) < ($1.name.lowercased().hasPrefix(query) ? 0 : 1) }
+            .prefix(12)
+            .map { Item.app(name: $0.name, url: $0.url, icon: NSWorkspace.shared.icon(forFile: $0.url.path), running: running.contains($0.url.standardizedFileURL.path)) }
+        return windows + apps
+    }
+
     func move(_ step: Int) {
-        guard !items.isEmpty else { return }
-        selection = min(max(selection + step, 0), items.count - 1)
+        let count = items.count
+        guard count > 0 else { return }
+        selection = min(max(selection + step, 0), count - 1)
     }
 }
 
-/// Leader, R: put another set's window, or a running app, where the focused
-/// window is. Sits over that window, which dims behind it. Leader v/s reuse
-/// it in the empty pane of a fresh split.
+/// Leader, R: put another set's window, or an app, where the focused window
+/// is. Sits over that window, which dims behind it. Leader v/s reuse it in
+/// the empty pane of a fresh split, and on an empty set it covers the stage.
 @MainActor
 final class ReplacePanel: NSObject, NSWindowDelegate {
     private unowned let controller: FocusController
@@ -298,6 +356,7 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
     private let model = ReplaceModel()
     private let keys = KeyMonitor()
     private var hideTask: Task<Void, Never>?
+    private var loadedApps = false
 
     init(controller: FocusController) {
         self.controller = controller
@@ -312,20 +371,35 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
 
     func show(over slot: CGRect, replacing window: WindowSummary) {
         model.mode = .replace
-        present(over: slot, window: window)
+        present(over: slot, window: window, search: false)
     }
 
     /// The empty pane of a split that just opened.
     func showSplit(over pane: CGRect, beside window: WindowSummary, axis: SplitAxis) {
         model.mode = .split(axis)
-        present(over: pane, window: window)
+        present(over: pane, window: window, search: false)
     }
 
-    private func present(over slot: CGRect, window: WindowSummary) {
+    /// An empty set: the whole stage, ready to type an app's name.
+    func showOpen(over stage: CGRect) {
+        model.mode = .open
+        present(over: stage, window: nil, search: true)
+    }
+
+    private func present(over slot: CGRect, window: WindowSummary?, search: Bool) {
         hideTask?.cancel()
         model.selection = 0
+        model.query = ""
+        model.searching = search
         model.replacing = window
-        model.items = items()
+        model.suggestions = suggestions()
+        if !loadedApps {
+            loadedApps = true
+            Task { [weak self] in
+                let apps = await InstalledApp.scan()
+                self?.model.installed = apps
+            }
+        }
         panel.setFrame(slot, display: true)
         panel.alphaValue = 1
         panel.makeKeyAndOrderFront(nil)
@@ -360,7 +434,7 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
 
     /// Windows parked in other sets, then running apps with no window in any
     /// set (choosing one opens a window for it here).
-    private func items() -> [ReplaceModel.Item] {
+    private func suggestions() -> [ReplaceModel.Item] {
         let state = controller.state
         let windows = StageState.numbers
             .filter { $0 != state.current }
@@ -369,14 +443,13 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
         let own = ProcessInfo.processInfo.processIdentifier
         let apps = NSWorkspace.shared.runningApplications
             .filter { $0.activationPolicy == .regular && $0.processIdentifier != own && !managedPIDs.contains($0.processIdentifier) }
-            .compactMap { app -> ReplaceModel.Item? in
+            .compactMap { app -> (String, ReplaceModel.Item)? in
                 guard let url = app.bundleURL else { return nil }
-                return .app(name: app.localizedName ?? url.deletingPathExtension().lastPathComponent, url: url, icon: app.icon)
+                let name = app.localizedName ?? url.deletingPathExtension().lastPathComponent
+                return (name, .app(name: name, url: url, icon: app.icon, running: true))
             }
-            .sorted { a, b in
-                guard case let .app(nameA, _, _) = a, case let .app(nameB, _, _) = b else { return false }
-                return nameA.localizedCaseInsensitiveCompare(nameB) == .orderedAscending
-            }
+            .sorted { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }
+            .map(\.1)
         return windows + apps
     }
 
@@ -384,28 +457,51 @@ final class ReplacePanel: NSObject, NSWindowDelegate {
         hide()
         switch (model.mode, item) {
         case let (.replace, .window(window, _)): controller.replace(with: window.id)
-        case let (.replace, .app(_, url, _)): controller.replace(withApp: url)
+        case let (.replace, .app(_, url, _, _)): controller.replace(withApp: url)
         case let (.split, .window(window, _)): controller.split(with: window.id)
-        case let (.split, .app(_, url, _)): controller.split(withApp: url)
+        case let (.split, .app(_, url, _, _)): controller.split(withApp: url)
+        case let (.open, .window(window, _)): controller.open(window.id)
+        case let (.open, .app(_, url, _, _)): controller.open(app: url)
         }
     }
 
-    /// j/k or arrows move, Return replaces, esc cancels. Everything else is
-    /// swallowed: there's nothing to type into.
+    /// Browsing: j/k or arrows move, `/` searches, Return chooses, esc cancels;
+    /// other keys are swallowed. Searching: type to filter, arrows move,
+    /// Return chooses, esc clears the search, then leaves it.
     private func handle(_ code: UInt16, _ flags: NSEvent.ModifierFlags, _ chars: String) -> Bool {
         guard flags.isDisjoint(with: [.command, .control, .option]) else { return false }
+        let items = model.items
         switch code {
-        case KeyCode.escape: cancel()
-        case KeyCode.down: model.move(1)
-        case KeyCode.up: model.move(-1)
-        case KeyCode.returnKey, KeyCode.enter:
-            if model.items.indices.contains(model.selection) { choose(model.items[model.selection]) }
-        default:
-            switch chars.lowercased() {
-            case "j": model.move(1)
-            case "k": model.move(-1)
-            default: break
+        case KeyCode.escape:
+            if model.searching, !model.query.isEmpty {
+                model.query = ""
+            } else if model.searching, model.mode != .open {
+                model.searching = false
+            } else {
+                cancel()
             }
+            return true
+        case KeyCode.down:
+            model.move(1)
+            return true
+        case KeyCode.up:
+            model.move(-1)
+            return true
+        case KeyCode.returnKey, KeyCode.enter:
+            if items.indices.contains(model.selection) { choose(items[model.selection]) }
+            return true
+        default:
+            break
+        }
+        // While searching, everything else goes to the text field.
+        if model.searching { return false }
+        switch chars.lowercased() {
+        case "j": model.move(1)
+        case "k": model.move(-1)
+        case "/":
+            model.searching = true
+            model.selection = 0
+        default: break
         }
         return true
     }
@@ -415,19 +511,20 @@ private struct ReplaceView: View {
     @Bindable var model: ReplaceModel
     let choose: (ReplaceModel.Item) -> Void
     let dismiss: () -> Void
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 // Replace: the window, dimmed and outlined in place.
-                // Split: the new, empty pane.
+                // Split and open: the empty pane or stage.
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSplit ? Color.accentColor.opacity(0.12) : Color.black.opacity(0.5))
+                    .fill(isEmptySpace ? Color.accentColor.opacity(0.12) : Color.black.opacity(0.5))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: isSplit ? 2 : 3, dash: isSplit ? [8, 6] : []))
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: isEmptySpace ? 2 : 3, dash: isEmptySpace ? [8, 6] : []))
                     )
-                    .background(isSplit ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(isEmptySpace ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .opacity(model.isPresented ? 1 : 0)
                     .onTapGesture(perform: dismiss)
 
@@ -439,12 +536,12 @@ private struct ReplaceView: View {
             }
         }
         .environment(\.colorScheme, .dark)
+        .onChange(of: model.searching) { _, searching in searchFocused = searching }
+        .onChange(of: model.isPresented) { _, presented in if presented { searchFocused = model.searching } }
+        .onChange(of: model.query) { model.selection = 0 }
     }
 
-    private var isSplit: Bool {
-        if case .split = model.mode { return true }
-        return false
-    }
+    private var isEmptySpace: Bool { model.mode != .replace }
 
     private var heading: String {
         let name = model.replacing?.appName ?? "window"
@@ -452,13 +549,21 @@ private struct ReplaceView: View {
         case .replace: return "Replace \(name)"
         case .split(.vertical): return "Open beside \(name)"
         case .split(.horizontal): return "Open below \(name)"
+        case .open: return "Open on this set"
         }
     }
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let items = model.items
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
-                icon(model.replacing?.icon, size: 32)
+                if model.mode == .open {
+                    Image(systemName: "plus.rectangle.on.rectangle")
+                        .font(.system(size: 20))
+                        .frame(width: 32, height: 32)
+                } else {
+                    icon(model.replacing?.icon, size: 32)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(heading)
                         .font(.system(size: 15, weight: .semibold))
@@ -471,10 +576,25 @@ private struct ReplaceView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
 
+            if model.searching {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Search apps and windows", text: $model.query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 15))
+                        .focused($searchFocused)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 36)
+                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+            }
+
             Divider().opacity(0.5)
 
-            if model.items.isEmpty {
-                Text("No windows in other sets, and every running app already has one.")
+            if items.isEmpty {
+                Text(emptyMessage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(16)
@@ -482,8 +602,8 @@ private struct ReplaceView: View {
                 ScrollViewReader { scroll in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
-                                if let title = header(at: index) { sectionTitle(title) }
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                                if let title = header(items, at: index) { sectionTitle(title) }
                                 row(item, selected: index == model.selection)
                                     .id(item.id)
                                     .onTapGesture { choose(item) }
@@ -493,8 +613,8 @@ private struct ReplaceView: View {
                         .padding(8)
                     }
                     .onChange(of: model.selection) { _, selection in
-                        guard model.items.indices.contains(selection) else { return }
-                        withAnimation(.easeOut(duration: 0.12)) { scroll.scrollTo(model.items[selection].id) }
+                        guard items.indices.contains(selection) else { return }
+                        withAnimation(.easeOut(duration: 0.12)) { scroll.scrollTo(items[selection].id) }
                     }
                 }
             }
@@ -502,9 +622,14 @@ private struct ReplaceView: View {
             Divider().opacity(0.5)
 
             HStack(spacing: 14) {
-                hint("j k", "Move")
-                hint("↩", isSplit ? "Open here" : "Replace")
-                hint("esc", "Cancel")
+                if model.searching {
+                    hint("↑ ↓", "Move")
+                } else {
+                    hint("j k", "Move")
+                    hint("/", "Search apps")
+                }
+                hint("↩", model.mode == .replace ? "Replace" : "Open here")
+                hint("esc", model.searching && model.mode != .open ? "Back" : "Cancel")
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
@@ -518,12 +643,19 @@ private struct ReplaceView: View {
         .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
     }
 
-    private func header(at index: Int) -> String? {
-        let item = model.items[index]
-        let previous = index > 0 ? model.items[index - 1] : nil
+    private var emptyMessage: String {
+        if model.searching {
+            return model.query.isEmpty ? "Type an app's name." : "No app or window matches."
+        }
+        return "Nothing to pick here. Press / to search apps."
+    }
+
+    private func header(_ items: [ReplaceModel.Item], at index: Int) -> String? {
+        let item = items[index]
+        let previous = index > 0 ? items[index - 1] : nil
         switch (item, previous) {
         case (.window, nil): return "Windows in other sets"
-        case (.app, nil), (.app, .window?): return "Open apps"
+        case (.app, nil), (.app, .window?): return model.searching ? "Apps" : "Open apps"
         default: return nil
         }
     }
@@ -553,11 +685,13 @@ private struct ReplaceView: View {
                 }
                 Spacer(minLength: 8)
                 SetBadge(number: number, size: 18)
-            case let .app(name, _, image):
+            case let .app(name, _, image, running):
                 icon(image, size: 24)
                 Text(name).font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 8)
-                Text("New window").font(.system(size: 11)).foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
+                Text(running ? "New window" : "Open")
+                    .font(.system(size: 11))
+                    .foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
             }
         }
         .padding(.horizontal, 10)

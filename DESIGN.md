@@ -151,6 +151,8 @@ How it works:
   - Opening dims and blurs the stage and springs the grid in from 96%; closing eases out in 0.14 s.
   - It opens on the previous set, so `⌃B` `Space` `Return` works like ⌘Tab.
 - **Replace picker:** sits over the window being replaced, which dims and gets an accent outline, with a card listing windows in other sets (each with its set badge), then running apps that have no window in any set. No search: `j` `k` or the arrows move, `Return` replaces, `Esc` cancels. An app that isn't running has to be opened the normal way; its window then follows the new-window rule.
+  - `/` turns the list into a search field: it filters the windows and lists matching installed apps (`/Applications`, `/System/Applications` and its Utilities, `~/Applications`), running or not. Arrows move while typing; Esc clears, then leaves search. Choosing an app that isn't running opens it; its first window takes the spot.
+  - On an empty set, `⌃B` `r`, `v` and `s` open the picker over the whole stage in search mode ("Open on this set"). A window from another set moves here; an app's existing window moves here, otherwise the app opens and its window joins this set by the new-window rule.
 - **Panels:** all of them are non-activating `NSPanel`s, so focus stays in the app you were using, the same as the clipboard panel.
 - **Motion:** kept as simple as possible. Settings → Focus → Switch animation offers Fade (default) or None.
   - Fade: freeze the screen below the menu bar as it is, move and activate the real windows underneath, wait 80 ms for the apps to redraw, then fade the frozen picture out over 0.14 s. Nothing on screen is ever a picture of where a window is going, so nothing can disagree with the real screen when it goes away.

@@ -57,6 +57,8 @@ struct MenuBarContent: View {
             Divider()
             HStack {
                 SettingsLink { Text("Settings…") }
+                    // Also when Settings is already open, somewhere behind.
+                    .simultaneousGesture(TapGesture().onEnded { SettingsWindow.bringToFront() })
                     .keyboardShortcut(",")
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }

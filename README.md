@@ -60,11 +60,12 @@ One display, one stage. The screen shows one set of up to two windows; everythin
 - `⌃B` `Space` opens the switcher: every set in a 3×3 grid, with live previews of each window. `h` `j` `k` `l` or the arrows move, Return goes, `1`–`9` jump, Esc closes. Right-click a set to pin an app to it.
 - Swiping up with three fingers opens the same switcher and swiping down closes it (Settings → Focus picks three or four fingers, or off). macOS's own Mission Control swipe needs to be off in Trackpad → More Gestures, or both open.
 - `⌃↑` opens the same switcher, in place of Mission Control, which shows parked windows small and scattered. Turn off Mission Control's own `⌃↑` in System Settings → Keyboard → Keyboard Shortcuts → Mission Control so the key reaches Focus. Turning on "Group windows by application" in Desktop & Dock → Mission Control also makes Mission Control itself easier to read.
-- `⌃B` `R` replaces the focused window with a window from another set, or with a running app that has no window in a set. `j` `k` or the arrows move, Return replaces. The window it replaces moves to that set, or to a new one. The card that follows has Undo.
+- `⌃B` `R` replaces the focused window with a window from another set, or with a running app that has no window in a set. `j` `k` or the arrows move, Return replaces. In this picker and the split picker, `/` searches every installed app too, running or not; Esc leaves the search. The window it replaces moves to that set, or to a new one. The card that follows has Undo.
 - `⌃B` `F` zooms the focused window to the whole screen, `⌃B` `\` floats it.
 - Pause after `⌃B` for a key guide. `⌃B` twice sends `⌃B` to the app, so tmux and text fields still get it.
 - Push the pointer to the left edge for a shelf of the other sets.
 - A new window joins the current set if it has room, otherwise it opens the next empty set and takes you there.
+- On an empty set, `⌃B` `R` (or `v`, `s`) opens the picker over the whole screen with search ready: type an app's name and press Return to open it there. Opening an app from Spotlight or the Dock works too: its window lands in the empty set.
 - Switching sets fades by default; Settings → Focus can turn the animation off.
 - On a wide display a lone window stops at 1,440 pt and centers. That width and the 12 pt gap between windows are both in Settings.
 - Switching off Focus or quitting the app brings every parked window back. If the app crashes, the next launch does.

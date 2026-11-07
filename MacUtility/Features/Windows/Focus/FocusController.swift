@@ -562,7 +562,8 @@ final class FocusController {
             return
         }
         guard let focused = set.focused ?? set.windows.first else {
-            HUD.show("Nothing to split")
+            // Nothing to split on an empty set: offer to open something.
+            showOpen()
             return
         }
         shelf.hide()
@@ -751,6 +752,8 @@ final class FocusController {
     // MARK: Panels
 
     #if DEBUG
+    func debugTrayClick(index: Int) { statusItem.debugClick(index: index) }
+
     func debugFreeze() {
         if let display { motion.debugFreeze(on: display) }
     }
@@ -783,13 +786,45 @@ final class FocusController {
     }
 
     func showReplace() {
-        guard isRunning, let target = focusedWindow() else {
-            HUD.show("Nothing to replace")
+        guard isRunning else { return }
+        guard let target = focusedWindow() else {
+            showOpen()
             return
         }
         shelf.hide()
         let frame = layout.frames(for: state.currentSet, zoomed: zoomed)[target] ?? layout.single
         replacer.show(over: cocoa(frame), replacing: summary(of: target))
+    }
+
+    /// An empty set: the picker over the whole stage, search ready.
+    func showOpen() {
+        guard isRunning else { return }
+        shelf.hide()
+        replacer.showOpen(over: cocoa(layout.inner))
+    }
+
+    /// Picker on an empty set: bring a window from another set here.
+    func open(_ id: WindowID) {
+        guard isRunning, state.currentSet.hasRoom, let from = state.setNumber(of: id), from != state.current else { return }
+        state.remove(id)
+        state.currentSet.insert(id)
+        state.currentSet.focused = id
+        apply()
+    }
+
+    /// Picker on an empty set: an app. Its window in another set comes here;
+    /// otherwise it's opened, and its new window joins this set by the
+    /// new-window rule.
+    func open(app url: URL) {
+        guard isRunning, let bundleID = Bundle(url: url)?.bundleIdentifier else { return }
+        let pids = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).map(\.processIdentifier))
+        if let other = state.allWindows.first(where: { id in registry.windows[id].map { pids.contains($0.pid) } == true }) {
+            open(other)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration)
     }
 
     func showShelf() {

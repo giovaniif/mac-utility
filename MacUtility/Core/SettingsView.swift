@@ -44,7 +44,10 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460)
-        .onAppear { permissions.startPolling() }
+        .onAppear {
+            permissions.startPolling()
+            SettingsWindow.bringToFront()
+        }
         .onDisappear { permissions.stopPolling() }
     }
 }
@@ -193,5 +196,21 @@ private struct FocusSettings: View {
     private func appName(_ bundleID: String) -> String {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
         return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+}
+
+/// Mac Utility is a menu bar app that never activates on its own, so its
+/// Settings window opened behind whatever app was in front.
+@MainActor
+enum SettingsWindow {
+    static func bringToFront() {
+        NSApp.activate()
+        // The window exists by the time the next run loop turn comes around.
+        DispatchQueue.main.async {
+            let window = NSApp.windows.first { $0.isVisible && !($0 is NSPanel) && $0.canBecomeKey && $0.identifier?.rawValue.localizedCaseInsensitiveContains("settings") == true }
+                ?? NSApp.windows.first { $0.isVisible && !($0 is NSPanel) && $0.canBecomeKey }
+            window?.makeKeyAndOrderFront(nil)
+            window?.orderFrontRegardless()
+        }
     }
 }

@@ -1,5 +1,8 @@
 import AppKit
 import Observation
+import os
+
+private let trayLog = Logger(subsystem: "com.giovani.MacUtility", category: "focus")
 
 /// Focus's own menu bar item, next to Mac Utility's: the numbers of the sets
 /// with windows, the current one filled (outlined when it's empty). Click a
@@ -56,17 +59,36 @@ final class SetsStatusItem: NSObject {
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
-        guard let event = NSApp.currentEvent else { return }
-        let point = sender.convert(event.locationInWindow, from: nil)
+        guard let event = NSApp.currentEvent, let window = sender.window else { return }
+        // The event's own window coordinates don't belong to the button's
+        // window on recent macOS, so take the pointer's screen position.
+        let point = sender.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
         let imageWidth = sender.image?.size.width ?? 0
         let x = point.x - (sender.bounds.width - imageWidth) / 2 - Self.inset
         let index = Int(floor(x / (Self.cell + Self.spacing)))
+        trayLog.debug("tray click type \(event.type.rawValue) x \(Int(point.x)) bounds \(Int(sender.bounds.width)) image \(Int(imageWidth)) col \(Int(x)) index \(index) numbers \(self.numbers)")
         if event.type == .leftMouseUp, x >= 0, numbers.indices.contains(index) {
             controller.goTo(numbers[index])
         } else {
             controller.showSwitcher()
         }
     }
+
+    #if DEBUG
+    /// Clicks the number at `index` with a real mouse event, as a user would.
+    func debugClick(index: Int) {
+        guard let button = item?.button, let window = button.window, let screen = NSScreen.screens.first else { return }
+        let imageWidth = button.image?.size.width ?? 0
+        let x = (button.bounds.width - imageWidth) / 2 + Self.inset + CGFloat(index) * (Self.cell + Self.spacing) + Self.cell / 2
+        let local = CGPoint(x: x, y: button.bounds.midY)
+        let onScreen = window.convertPoint(toScreen: button.convert(local, to: nil))
+        let point = CGPoint(x: onScreen.x, y: screen.frame.height - onScreen.y)
+        trayLog.debug("tray debug click at \(Int(point.x)),\(Int(point.y)) window \(window.frame.debugDescription, privacy: .public)")
+        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+        }
+    }
+    #endif
 
     /// Template image, so it follows the menu bar's light or dark look.
     static func image(numbers: [Int], current: Int, occupied: Set<Int>) -> NSImage {

@@ -52,6 +52,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 actions.focus.armLeader()
             }
         }
+        if UserDefaults.standard.bool(forKey: "testFocusTray") {
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                actions.focus.debugTrayClick(index: 0)
+            }
+        }
+        if UserDefaults.standard.bool(forKey: "testFocusOpen") {
+            Task {
+                let focus = actions.focus
+                try? await Task.sleep(for: .seconds(2))
+                if let empty = focus.state.lowestEmpty() { focus.goTo(empty) }
+                try? await Task.sleep(for: .seconds(1))
+                focus.showReplace()
+            }
+        }
         if UserDefaults.standard.bool(forKey: "testFocusFreeze") {
             Task {
                 try? await Task.sleep(for: .seconds(2))
