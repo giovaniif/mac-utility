@@ -5,6 +5,7 @@ mod app;
 mod autostart;
 mod clipboard;
 mod feature;
+mod keyboard_clean;
 mod settings;
 mod shortcut_label;
 mod tray;
@@ -14,6 +15,7 @@ use eframe::egui;
 /// Every feature, in tray/Settings order. Feature modules add themselves here.
 fn features() -> Vec<Box<dyn feature::Feature>> {
     vec![
+        Box::new(keyboard_clean::KeyboardCleanFeature::new()),
         Box::new(clipboard::ClipboardFeature::new()),
     ]
 }
