@@ -3,6 +3,7 @@
 
 mod app;
 mod autostart;
+mod capture;
 mod clipboard;
 mod feature;
 mod settings;
@@ -15,6 +16,7 @@ use eframe::egui;
 fn features() -> Vec<Box<dyn feature::Feature>> {
     vec![
         Box::new(clipboard::ClipboardFeature::new()),
+        Box::new(capture::CaptureFeature::new()),
     ]
 }
 

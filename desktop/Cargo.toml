@@ -20,9 +20,18 @@ serde_json = "1"
 sha2 = "0.10"
 tray-icon = "0.19"
 uuid = { version = "1", features = ["v4"] }
+xcap = "0.9"
+rfd = "0.15"
+tiny-skia = "0.11"
+ab_glyph = "0.2"
+epaint_default_fonts = "0.29"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+x11rb = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"
