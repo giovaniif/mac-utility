@@ -613,6 +613,13 @@ final class FocusController {
         }
     }
 
+    /// Leader t: flip the split between side by side and top and bottom.
+    func toggleAxis() {
+        guard isRunning, state.toggleAxis() else { return }
+        zoomed = nil
+        apply()
+    }
+
     /// Leader o, like vim's Ctrl-w o: keep the focused window alone.
     func only() {
         guard isRunning, let other = state.currentSet.unfocused else { return }

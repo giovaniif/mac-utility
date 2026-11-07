@@ -209,6 +209,7 @@ final class LeaderKey: NSObject, NSWindowDelegate {
             case "v": finish { $0.split(.vertical) }
             case "s": finish { $0.split(.horizontal) }
             case "o": finish { $0.only() }
+            case "t": finish { $0.toggleAxis() }
             case "r": finish { $0.showReplace() }
             case "f": finish { $0.toggleZoom() }
             case "\\": finish { $0.toggleFloat() }
@@ -273,7 +274,8 @@ private struct KeyGuideView: View {
 
     private var rows: [(String, String)] { [
         ("1–9", "Go to set"), ("Shift 1–9", "Move window to set"), ("⇥", "Previous set"),
-        ("v", "Split side by side"), ("s", "Split top / bottom"), ("o", "Only this window"),
+        ("v", "Split side by side"), ("s", "Split top / bottom"), ("t", "Flip split direction"),
+        ("o", "Only this window"),
         ("h j k l", "Focus pane"), ("Shift h j k l", "Swap panes"), ("↩", "Split ⇄ stacked"),
         ("Space", "Switcher"), ("r", "Replace this window"), ("f", "Zoom to full stage"),
         ("\\", "Float / unfloat"), (leader, "Send \(leader) to app"), ("esc", "Cancel"),
@@ -293,10 +295,10 @@ private struct KeyGuideView: View {
                 Text(setLabel).font(.caption).foregroundStyle(.secondary)
             }
             Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
-                ForEach(0..<5) { row in
+                ForEach(0..<(rows.count + 2) / 3, id: \.self) { row in
                     GridRow {
                         ForEach(0..<3) { column in
-                            let item = rows[row * 3 + column]
+                            let item = rows.indices.contains(row * 3 + column) ? rows[row * 3 + column] : ("", "")
                             HStack(spacing: 10) {
                                 Text(item.0)
                                     .font(.callout.weight(.semibold))
@@ -305,6 +307,7 @@ private struct KeyGuideView: View {
                                     .background(Color.primary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                                 Text(item.1).font(.callout)
                             }
+                            .opacity(item.0.isEmpty ? 0 : 1)
                         }
                     }
                 }

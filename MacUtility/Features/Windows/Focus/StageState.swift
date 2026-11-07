@@ -226,6 +226,15 @@ struct StageState: Codable, Equatable, Sendable {
         currentSet.layout = .split
     }
 
+    /// Flip a split between side by side and top and bottom. A stacked set
+    /// comes back split. Returns false when there's nothing to flip.
+    @discardableResult
+    mutating func toggleAxis() -> Bool {
+        guard currentSet.windows.count == 2 else { return false }
+        setAxis(currentSet.layout == .stacked ? currentSet.axis : (currentSet.axis == .vertical ? .horizontal : .vertical))
+        return true
+    }
+
     /// Focus the pane in a direction, like vim's Ctrl-w h/j/k/l. Returns
     /// false when there's no pane that way.
     @discardableResult

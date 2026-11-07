@@ -122,6 +122,7 @@ The screen shows one small group of windows at a time. Everything else is parked
 | `⇥` | Previous set |
 | `v` | Split side by side (vim `Ctrl-w v`): the window takes the left half now, a picker opens in the empty right pane. With two windows, turn the split side by side |
 | `s` | Same, top and bottom (vim `Ctrl-w s`) |
+| `t` | Flip the split between side by side and top and bottom; a stacked set comes back split |
 | `o` | Only (vim `Ctrl-w o`): keep the focused window, move the other to a new set |
 | `h` `j` `k` `l` / arrows | Focus the pane in that direction |
 | `⇧h` `⇧j` `⇧k` `⇧l` / `⇧`arrows | Swap the two windows |

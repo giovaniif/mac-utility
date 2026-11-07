@@ -239,6 +239,23 @@ struct StageStateTests {
         #expect(state.currentSet.focused == 1)
     }
 
+    @Test func toggleAxisFlipsTheSplit() {
+        var state = StageState()
+        state.add(1)
+        let single = state.toggleAxis()
+        #expect(!single)
+        state.add(2)
+        let first = state.toggleAxis()
+        #expect(first)
+        #expect(state.currentSet.axis == .horizontal)
+        state.toggleAxis()
+        #expect(state.currentSet.axis == .vertical)
+        state.toggleLayout()
+        state.toggleAxis()
+        #expect(state.currentSet.layout == .split)
+        #expect(state.currentSet.axis == .vertical)
+    }
+
     @Test func oldSavedSetsDecodeAsSideBySide() throws {
         let json = #"{"windows":[1,2],"focused":1,"layout":"split","ratio":0.5}"#
         let set = try JSONDecoder().decode(FocusSet.self, from: Data(json.utf8))
