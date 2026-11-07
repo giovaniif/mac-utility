@@ -5,6 +5,7 @@ mod app;
 mod autostart;
 mod clipboard;
 mod feature;
+mod recording;
 mod settings;
 mod shortcut_label;
 mod tray;
@@ -15,6 +16,7 @@ use eframe::egui;
 fn features() -> Vec<Box<dyn feature::Feature>> {
     vec![
         Box::new(clipboard::ClipboardFeature::new()),
+        Box::new(recording::RecordingFeature::new()),
     ]
 }
 
