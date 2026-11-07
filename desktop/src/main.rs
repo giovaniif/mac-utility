@@ -7,6 +7,7 @@ mod capture;
 mod clipboard;
 mod feature;
 mod keyboard_clean;
+mod recording;
 mod settings;
 mod shortcut_label;
 mod tray;
@@ -19,6 +20,7 @@ fn features() -> Vec<Box<dyn feature::Feature>> {
         Box::new(keyboard_clean::KeyboardCleanFeature::new()),
         Box::new(clipboard::ClipboardFeature::new()),
         Box::new(capture::CaptureFeature::new()),
+        Box::new(recording::RecordingFeature::new()),
     ]
 }
 
