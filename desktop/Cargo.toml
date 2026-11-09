@@ -1,6 +1,6 @@
 [package]
 name = "utility"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "Windows and Linux port of Mac Utility"
 publish = false
