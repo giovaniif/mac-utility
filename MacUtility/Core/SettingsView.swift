@@ -139,7 +139,7 @@ private struct FocusSettings: View {
                 Text("None").tag(SwitchAnimation.none.rawValue)
             }
             VStack(alignment: .leading) {
-                Picker("Trackpad swipe up", selection: $trackpadFingers) {
+                Picker("Trackpad swipes", selection: $trackpadFingers) {
                     Text("Off").tag(0)
                     Text("Three fingers").tag(3)
                     Text("Four fingers").tag(4)
@@ -188,7 +188,7 @@ private struct FocusSettings: View {
         guard trackpadFingers > 0 else { return "Swiping does nothing in Focus." }
         let key = trackpadFingers == 3 ? "TrackpadThreeFingerVertSwipeGesture" : "TrackpadFourFingerVertSwipeGesture"
         let value = CFPreferencesCopyAppValue(key as CFString, "com.apple.AppleMultitouchTrackpad" as CFString) as? Int
-        let base = "Swipe up opens the switcher, swipe down closes it."
+        let base = "Swipe up opens the switcher, swipe down closes it. Swipe left or right to change sets, or two fingers sideways on a Magic Mouse."
         guard value == 2 else { return base }
         return base + " macOS still uses this swipe for Mission Control, so both would open: turn off Mission Control in System Settings → Trackpad → More Gestures."
     }
