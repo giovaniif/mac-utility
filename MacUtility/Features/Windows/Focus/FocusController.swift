@@ -51,6 +51,12 @@ final class FocusController {
     @ObservationIgnored private var memory: [String: Int] = [:]
     /// Floated by the user with the leader's `\`.
     @ObservationIgnored private var floating: Set<WindowID> = []
+    /// Popups, sign-in and settings windows: classified once, when first
+    /// seen, so a later resize doesn't pull them into a set.
+    @ObservationIgnored private var popups: Set<WindowID> = []
+    @ObservationIgnored private var seen: Set<WindowID> = []
+    /// While the screen is locked displays come and go; leave windows alone.
+    @ObservationIgnored private var locked = false
     /// Didn't fit anywhere: every set was full.
     @ObservationIgnored private var overflow: Set<WindowID> = []
     /// Minimized or hidden windows and the set they come back to.
@@ -74,6 +80,7 @@ final class FocusController {
     /// Never tiled: utility apps whose windows are fixed panels at heart.
     private static let floatingApps: Set<String> = [
         "com.apple.systempreferences",
+        "com.apple.finder",
         "com.apple.calculator",
         "com.apple.archiveutility",
         "com.apple.ScreenSharing",
@@ -104,6 +111,20 @@ final class FocusController {
         tokens.append(center.addObserver(forName: .featureToggled, object: nil, queue: .main) { note in
             guard let feature = note.object as? Feature, feature == .focus else { return }
             MainActor.assumeIsolated { [weak self] in self?.syncWithFeature() }
+        })
+        let distributed = DistributedNotificationCenter.default()
+        tokens.append(distributed.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { [weak self] in self?.locked = true }
+        })
+        tokens.append(distributed.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { [weak self] in self?.recoverAfterLock() }
+        })
+        let workspace = NSWorkspace.shared.notificationCenter
+        tokens.append(workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { [weak self] in
+                guard let self, !self.locked else { return }
+                self.recoverAfterLock()
+            }
         })
         tokens.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { [weak self] in self?.apply(focus: false) }
@@ -162,6 +183,21 @@ final class FocusController {
         startTrackpad()
         apply(focus: true)
         log.notice("focus started with \(self.state.allWindows.count) windows")
+    }
+
+    /// Lock and sleep drop the Accessibility observers and the trackpad
+    /// devices; rebuild both and put the stage back.
+    private func recoverAfterLock() {
+        locked = false
+        guard isRunning else { return }
+        adopting = true
+        registry.stop()
+        registry.start()
+        adopting = false
+        adoptAll()
+        startTrackpad()
+        apply(focus: false)
+        log.notice("focus recovered after lock with \(self.state.allWindows.count) windows")
     }
 
     /// Brings every parked window back to where it last was on the stage.
@@ -254,13 +290,34 @@ final class FocusController {
     }
 
     private func isManageable(_ window: TrackedWindow) -> Bool {
-        guard !floating.contains(window.id), !window.isMinimized, !window.isFullScreen,
+        guard !floating.contains(window.id), !isPopup(window), !window.isMinimized, !window.isFullScreen,
               window.app?.isHidden != true,
               window.element.string(kAXSubroleAttribute) == kAXStandardWindowSubrole,
               window.element.isSettable(kAXSizeAttribute), window.element.isSettable(kAXPositionAttribute),
               let frame = window.frame, frame.width >= 200, frame.height >= 150 else { return false }
-        if let bundleID = window.bundleID, Self.floatingApps.contains(bundleID) { return false }
         return true
+    }
+
+    private func isPopup(_ window: TrackedWindow) -> Bool {
+        if seen.insert(window.id).inserted, classifyPopup(window) { popups.insert(window.id) }
+        return popups.contains(window.id)
+    }
+
+    /// Finder, System Settings, app settings windows, sign-in and web popups
+    /// (a Meet popover, an OAuth window) float above the stage instead.
+    private func classifyPopup(_ window: TrackedWindow) -> Bool {
+        if let bundleID = window.bundleID, Self.floatingApps.contains(bundleID) { return true }
+        let element = window.element
+        if element.bool("AXModal") == true { return true }
+        // Settings and auth windows can't zoom or go full screen.
+        guard let zoom = element.element(kAXZoomButtonAttribute), zoom.bool(kAXEnabledAttribute) != false,
+              element.element(kAXFullScreenButtonAttribute) != nil else { return true }
+        // A small extra window from an app that already has one tiled.
+        if let frame = window.frame, frame.width < 1000 || frame.height < 700,
+           registry.windows.values.contains(where: { $0.pid == window.pid && $0.id != window.id && state.contains($0.id) }) {
+            return true
+        }
+        return false
     }
 
     // MARK: Placing windows
@@ -268,7 +325,7 @@ final class FocusController {
     /// Moves real windows to match `state`: the current set on the stage,
     /// everything else parked. `focus` raises the set's focused window.
     func apply(focus: Bool = true) {
-        guard isRunning else { return }
+        guard isRunning, !locked else { return }
         log.debug("trace apply focus \(focus) current \(self.state.current)")
         let set = state.currentSet
         appliedWidthCap = Self.widthCap
@@ -368,6 +425,14 @@ final class FocusController {
         guard !adopting, isRunning else { return }
         switch event {
         case let .appeared(id):
+            if let window = registry.windows[id], !state.contains(id), isPopup(window) {
+                // Popups open on top of the stage, after any re-tiling.
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(150))
+                    self?.registry.raise(id)
+                }
+                return
+            }
             windowAppeared(id)
         case let .disappeared(id):
             windowGone(id)
@@ -449,6 +514,8 @@ final class FocusController {
 
     private func windowGone(_ id: WindowID) {
         floating.remove(id)
+        popups.remove(id)
+        seen.remove(id)
         overflow.remove(id)
         away[id] = nil
         homes[id] = nil
@@ -693,6 +760,9 @@ final class FocusController {
             apply(focus: false)
             registry.raise(id)
             HUD.show("Floating")
+        } else if popups.remove(id) != nil {
+            add(id, preferred: nil, activate: true)
+            HUD.show("Tiled")
         } else if floating.remove(id) != nil {
             windowAppeared(id)
             HUD.show("Tiled")
