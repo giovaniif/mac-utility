@@ -243,9 +243,25 @@ final class FocusController {
             switch direction {
             case .up where !self.switcher.isVisible: self.showSwitcher()
             case .down where self.switcher.isVisible: self.switcher.hide()
+            // Fingers moving right go to the next set.
+            case .right where !self.switcher.isVisible: self.stepSet(by: 1)
+            case .left where !self.switcher.isVisible: self.stepSet(by: -1)
             default: break
             }
         }
+    }
+
+    /// Next or previous set that has windows, wrapping around.
+    private func stepSet(by offset: Int) {
+        let occupied = state.occupied
+        guard !occupied.isEmpty else { return }
+        let target: Int?
+        if offset > 0 {
+            target = occupied.first { $0 > state.current } ?? occupied.first
+        } else {
+            target = occupied.last { $0 < state.current } ?? occupied.last
+        }
+        if let target { goTo(target) }
     }
 
     /// First run, or windows that opened while Focus was off.
