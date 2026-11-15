@@ -76,6 +76,21 @@ if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q get-task-allow; the
   exit 1
 fi
 
+notarize() {
+  out="$tmp/notary.json"
+  xcrun notarytool submit "$1" \
+    --apple-id "$MACOS_NOTARY_APPLE_ID" --password "$MACOS_NOTARY_PASSWORD" \
+    --team-id "$TEAM" --wait --timeout 45m --output-format json | tee "$out"
+  status="$(plutil -extract status raw -o - "$out")"
+  if [ "$status" != Accepted ]; then
+    id="$(plutil -extract id raw -o - "$out")"
+    echo "::error::Notarization of $1 ended as $status"
+    xcrun notarytool log "$id" \
+      --apple-id "$MACOS_NOTARY_APPLE_ID" --password "$MACOS_NOTARY_PASSWORD" --team-id "$TEAM" || true
+    exit 1
+  fi
+}
+
 if [ "${NOTARIZE:-0}" = 1 ]; then
   for v in MACOS_NOTARY_APPLE_ID MACOS_NOTARY_PASSWORD; do
     if [ -z "${!v:-}" ]; then
@@ -84,20 +99,23 @@ if [ "${NOTARIZE:-0}" = 1 ]; then
     fi
   done
   ditto -c -k --keepParent "$APP" "$tmp/notarize.zip"
-  out="$tmp/notary.json"
-  xcrun notarytool submit "$tmp/notarize.zip" \
-    --apple-id "$MACOS_NOTARY_APPLE_ID" --password "$MACOS_NOTARY_PASSWORD" \
-    --team-id "$TEAM" --wait --timeout 45m --output-format json | tee "$out"
-  status="$(plutil -extract status raw -o - "$out")"
-  if [ "$status" != Accepted ]; then
-    id="$(plutil -extract id raw -o - "$out")"
-    echo "::error::Notarization ended as $status"
-    xcrun notarytool log "$id" \
-      --apple-id "$MACOS_NOTARY_APPLE_ID" --password "$MACOS_NOTARY_PASSWORD" --team-id "$TEAM" || true
-    exit 1
-  fi
+  notarize "$tmp/notarize.zip"
   xcrun stapler staple "$APP"
   spctl --assess --type execute --verbose=2 "$APP"
+
+  # The release DMG, as scripts/release.sh makes it.
+  version=$(sed -n 's/.*MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)
+  dmg="MacUtility-$version.dmg"
+  rm -rf "$tmp/dmg" "$dmg"
+  mkdir -p "$tmp/dmg"
+  ditto "$APP" "$tmp/dmg/Mac Utility.app"
+  ln -s /Applications "$tmp/dmg/Applications"
+  hdiutil create -volname "Mac Utility" -srcfolder "$tmp/dmg" -ov -format UDZO "$dmg" >/dev/null
+  codesign --sign "$identity" --timestamp "$dmg"
+  notarize "$dmg"
+  xcrun stapler staple "$dmg"
+  spctl --assess --type open --context context:primary-signature -v "$dmg"
+  shasum -a 256 "$dmg"
 fi
 
 ditto -c -k --keepParent "$APP" "$zip"

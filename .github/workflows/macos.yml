@@ -51,7 +51,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: MacUtility
-          path: MacUtility-*.zip
+          path: |
+            MacUtility-*.zip
+            MacUtility-*.dmg
           retention-days: 14
           compression-level: 0
 
