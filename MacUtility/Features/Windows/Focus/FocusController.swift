@@ -72,6 +72,7 @@ final class FocusController {
     @ObservationIgnored private var openSplit: SplitAxis?
     @ObservationIgnored private var pendingSplit: (bundleID: String, until: Date)?
     @ObservationIgnored private var settleTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var adopting = false
     @ObservationIgnored private var tokens: [NSObjectProtocol] = []
@@ -116,7 +117,7 @@ final class FocusController {
         })
         let distributed = DistributedNotificationCenter.default()
         tokens.append(distributed.addObserver(forName: .init("com.apple.screenIsLocked"), object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { [weak self] in self?.locked = true }
+            MainActor.assumeIsolated { [weak self] in self?.pauseForLock() }
         })
         tokens.append(distributed.addObserver(forName: .init("com.apple.screenIsUnlocked"), object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { [weak self] in self?.recoverAfterLock() }
@@ -187,24 +188,66 @@ final class FocusController {
         log.notice("focus started with \(self.state.allWindows.count) windows")
     }
 
-    /// Lock and sleep drop the Accessibility observers and the trackpad
-    /// devices; rebuild both and put the stage back.
-    private func recoverAfterLock() {
-        locked = false
+    /// While locked, macOS shuffles windows as displays sleep and come back.
+    /// None of that is the user's doing, so Focus neither moves windows nor
+    /// reads those moves as drags out of a set.
+    private func pauseForLock() {
+        locked = true
+        recoveryTask?.cancel()
         guard isRunning else { return }
+        leader.disarm()
+        switcher.hide()
+        replacer.hide()
+        shelf.stopWatchingPointer()
+        shelf.hide()
+        log.notice("focus paused for lock")
+    }
+
+    /// Lock and sleep drop the Accessibility observers and the trackpad
+    /// devices; rebuild both and put the stage back. Right at unlock, apps
+    /// and displays are still waking up, so wait a moment, then go over it
+    /// again for the apps that were slow to answer.
+    private func recoverAfterLock() {
+        recoveryTask?.cancel()
+        guard isRunning else {
+            locked = false
+            return
+        }
+        locked = true
+        recoveryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self, self.isRunning else { return }
+            self.locked = false
+            self.rebuild(restartRegistry: true)
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, self.isRunning, !self.locked else { return }
+            self.rebuild(restartRegistry: false)
+            self.log.notice("focus recovered after lock with \(self.state.allWindows.count) windows")
+        }
+    }
+
+    private func rebuild(restartRegistry: Bool) {
         adopting = true
-        registry.stop()
-        registry.start()
+        if restartRegistry {
+            registry.stop()
+            registry.start()
+        } else {
+            registry.rescan()
+        }
         adopting = false
-        adoptAll()
-        startTrackpad()
+        adoptAll(recovering: true)
+        if restartRegistry {
+            startTrackpad()
+            shelf.startWatchingPointer()
+        }
         apply(focus: false)
-        log.notice("focus recovered after lock with \(self.state.allWindows.count) windows")
     }
 
     /// Brings every parked window back to where it last was on the stage.
     func stop() {
         guard isRunning else { return }
+        recoveryTask?.cancel()
+        locked = false
         leader.disarm()
         switcher.hide()
         replacer.hide()
@@ -266,10 +309,17 @@ final class FocusController {
         if let target { goTo(target) }
     }
 
-    /// First run, or windows that opened while Focus was off.
-    private func adoptAll() {
-        let windows = registry.windowsFrontToBack().filter { isManageable($0) && (state.contains($0.id) || isOnDisplay($0)) }
-        state.prune(keeping: Set(windows.map(\.id)))
+    /// First run, or windows that opened while Focus was off. After a lock,
+    /// `recovering` keeps every set's windows that still exist, even if
+    /// their app doesn't answer Accessibility yet or macOS moved them.
+    private func adoptAll(recovering: Bool = false) {
+        let windows = registry.windowsFrontToBack().filter { window in
+            if recovering, state.contains(window.id) { return true }
+            return isManageable(window) && (state.contains(window.id) || isOnDisplay(window))
+        }
+        var keep = Set(windows.map(\.id))
+        if recovering { keep.formUnion(WindowRegistry.existingWindowIDs().intersection(state.allWindows)) }
+        state.prune(keeping: keep)
         parked.formIntersection(state.allWindows)
         let fresh = windows.filter { !state.contains($0.id) }
         if state.allWindows.isEmpty {
@@ -440,7 +490,8 @@ final class FocusController {
     // MARK: Events
 
     private func handle(_ event: WindowRegistry.Event) {
-        guard !adopting, isRunning else { return }
+        // Whatever happened while locked, the rebuild after unlock sorts out.
+        guard !adopting, isRunning, !locked else { return }
         switch event {
         case let .appeared(id):
             if let pid = registry.windows[id]?.pid { lastPID[id] = pid }
