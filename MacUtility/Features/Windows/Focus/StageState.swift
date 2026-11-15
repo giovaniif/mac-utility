@@ -329,6 +329,15 @@ struct StageState: Codable, Equatable, Sendable {
         return b
     }
 
+    /// Puts an unmanaged window in `old`'s exact slot, e.g. another tab of
+    /// the same tab group becoming the visible one.
+    mutating func swap(_ old: WindowID, for new: WindowID) {
+        guard let a = setNumber(of: old), !contains(new),
+              let index = self[set: a].windows.firstIndex(of: old) else { return }
+        self[set: a].windows[index] = new
+        if self[set: a].focused == old { self[set: a].focused = new }
+    }
+
     /// Replace with a window that isn't managed yet (a new app): it takes the
     /// focused window's place, and that window moves to a new set. Returns
     /// where it went, or nil when no set had room and it became unmanaged.
