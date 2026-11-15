@@ -1,0 +1,85 @@
+# Builds MacUtility.app on every push and PR that touches the Swift app, runs
+# the unit tests, and leaves the app zipped in the run's artifacts. Signed with
+# the Developer ID when the secrets are set (see .github/scripts/macos-build.sh).
+# Run it by hand with "notarize" for a build that opens on any Mac.
+#
+# On the Mac: gh run download -R giovaniif/mac-utility -n MacUtility <run-id>
+name: macOS
+
+on:
+  push:
+    paths: ["MacUtility/**", "MacUtilityTests/**", "project.yml", ".github/workflows/macos.yml", ".github/scripts/macos-build.sh"]
+  pull_request:
+    paths: ["MacUtility/**", "MacUtilityTests/**", "project.yml", ".github/workflows/macos.yml", ".github/scripts/macos-build.sh"]
+  workflow_dispatch:
+    inputs:
+      notarize:
+        description: Notarize the app
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: brew install xcodegen
+
+      - uses: actions/cache@v4
+        with:
+          path: build/SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+
+      - name: Build MacUtility.app
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          NOTARIZE: ${{ inputs.notarize && '1' || '0' }}
+        run: .github/scripts/macos-build.sh
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: MacUtility
+          path: MacUtility-*.zip
+          retention-days: 14
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7
+
+  test:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: brew install xcodegen
+
+      - uses: actions/cache@v4
+        with:
+          path: build/SourcePackages
+          key: spm-${{ hashFiles('project.yml') }}
+
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          xcodegen generate
+          xcodebuild test -project MacUtility.xcodeproj -scheme MacUtility -destination "platform=macOS" \
+            -derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages \
+            CODE_SIGN_IDENTITY=- \
+            | xcbeautify --renderer github-actions
