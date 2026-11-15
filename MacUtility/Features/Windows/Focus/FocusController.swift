@@ -47,6 +47,8 @@ final class FocusController {
     @ObservationIgnored private lazy var statusItem = SetsStatusItem(controller: self)
 
     @ObservationIgnored private var homes: [WindowID: CGRect] = [:]
+    /// Owner of each window, still known after the registry drops it.
+    @ObservationIgnored private var lastPID: [WindowID: pid_t] = [:]
     @ObservationIgnored private var parked: Set<WindowID> = []
     @ObservationIgnored private var memory: [String: Int] = [:]
     /// Floated by the user with the leader's `\`.
@@ -441,6 +443,7 @@ final class FocusController {
         guard !adopting, isRunning else { return }
         switch event {
         case let .appeared(id):
+            if let pid = registry.windows[id]?.pid { lastPID[id] = pid }
             if let window = registry.windows[id], !state.contains(id), isPopup(window) {
                 // Popups open on top of the stage, after any re-tiling.
                 Task { [weak self] in
@@ -485,8 +488,10 @@ final class FocusController {
     }
 
     private func windowAppeared(_ id: WindowID) {
-        guard !state.contains(id), !overflow.contains(id), let window = registry.windows[id],
-              isManageable(window), isOnDisplay(window) else { return }
+        guard !state.contains(id), !overflow.contains(id), let window = registry.windows[id] else { return }
+        // A new tab is the same window to the user: it takes its group's slot.
+        if adoptTab(window) { return }
+        guard isManageable(window), isOnDisplay(window) else { return }
 
         if let pending = pendingSplit, pending.bundleID == window.bundleID, Date() < pending.until, let axis = openSplit {
             pendingSplit = nil
@@ -528,7 +533,53 @@ final class FocusController {
         }
     }
 
+    // MARK: Tabs
+
+    /// Native tabs (Terminal, Finder, Xcode…) are separate windows to
+    /// Accessibility, but only the selected one is shown. A tab group holds
+    /// one slot, filled by whichever tab is visible.
+    private func isTabbed(_ window: TrackedWindow) -> Bool {
+        window.element.elements(kAXChildrenAttribute).contains { $0.string(kAXRoleAttribute) == kAXTabGroupRole }
+    }
+
+    private func sameFrame(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2 && abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
+    }
+
+    /// The managed tab sharing `window`'s tab group, if any.
+    private func tabSibling(of window: TrackedWindow) -> WindowID? {
+        guard isTabbed(window), let frame = window.frame else { return nil }
+        return registry.windows.values.first { other in
+            other.pid == window.pid && other.id != window.id && state.contains(other.id) && !away.keys.contains(other.id)
+                && (other.frame.map { sameFrame($0, frame) } ?? false || homes[other.id].map { sameFrame($0, frame) } ?? false)
+        }?.id
+    }
+
+    /// Swaps `window` into its tab group's slot. True when it was a tab.
+    private func adoptTab(_ window: TrackedWindow) -> Bool {
+        guard let sibling = tabSibling(of: window) else { return false }
+        let number = state.setNumber(of: sibling)
+        state.swap(sibling, for: window.id)
+        if parked.remove(sibling) != nil { parked.insert(window.id) }
+        homes[window.id] = homes[sibling]
+        if number == state.current { apply(focus: false) } else { scheduleSave() }
+        return true
+    }
+
+    /// A managed tab closed: the group's next visible tab takes the slot.
+    private func handOffTab(_ id: WindowID) -> Bool {
+        guard state.contains(id), let pid = registry.windows[id]?.pid ?? lastPID[id],
+              let next = registry.focusedWindow(of: pid), next != id, !state.contains(next),
+              let window = registry.windows[next], isTabbed(window),
+              let frame = window.frame, let home = homes[id], sameFrame(frame, home) else { return false }
+        state.swap(id, for: next)
+        homes[next] = home
+        return true
+    }
+
     private func windowGone(_ id: WindowID) {
+        let handedOff = handOffTab(id)
+        lastPID[id] = nil
         floating.remove(id)
         popups.remove(id)
         seen.remove(id)
@@ -540,13 +591,16 @@ final class FocusController {
         thumbnails[id] = nil
         if zoomed == id { zoomed = nil }
         if pendingReplace?.target == id { pendingReplace = nil }
-        if let number = state.remove(id) {
+        if handedOff {
+            apply(focus: false)
+        } else if let number = state.remove(id) {
             apply(focus: number == state.current)
         }
     }
 
     private func focusChanged(_ id: WindowID) {
         log.debug("trace focus \(id) muted \(Date() <= self.focusMutedUntil) set \(self.state.setNumber(of: id) ?? -1) current \(self.state.current)")
+        if !state.contains(id), let window = registry.windows[id], adoptTab(window) { return }
         guard Date() > focusMutedUntil, state.contains(id) else { return }
         let changed = state.focus(id)
         if changed {
