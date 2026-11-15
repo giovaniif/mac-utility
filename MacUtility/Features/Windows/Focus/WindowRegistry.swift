@@ -68,7 +68,10 @@ final class WindowRegistry {
         on(NSWorkspace.didUnhideApplicationNotification) { [weak self] app in self?.onEvent(.appShown(app.processIdentifier)) }
         on(NSWorkspace.didActivateApplicationNotification) { [weak self] app in
             guard let self else { return }
-            // Pick up windows that appeared before the observer was ready.
+            // Pick up apps that weren't ready for Accessibility when first
+            // seen (after unlock or wake, say), and windows that appeared
+            // before the observer was.
+            self.watch(app)
             self.scan(app)
             if let id = self.focusedWindow(of: app.processIdentifier) { self.onEvent(.focused(id)) }
         }
@@ -83,6 +86,21 @@ final class WindowRegistry {
         }
         observers.removeAll()
         windows.removeAll()
+    }
+
+    /// Watches apps that weren't ready before and picks up their windows.
+    func rescan() {
+        for app in NSWorkspace.shared.runningApplications {
+            watch(app)
+            scan(app)
+        }
+    }
+
+    /// Every window the window server still has, whether or not
+    /// Accessibility answers for it right now.
+    static func existingWindowIDs() -> Set<WindowID> {
+        let list = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(list.compactMap { $0[kCGWindowNumber as String] as? WindowID })
     }
 
     /// Windows of every watched app, front to back as the window server
