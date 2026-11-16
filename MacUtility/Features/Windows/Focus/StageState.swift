@@ -274,6 +274,16 @@ struct StageState: Codable, Equatable, Sendable {
         return true
     }
 
+    /// Dropped on one side of a lone window: `id` comes from another set and
+    /// takes that side of an even split. Returns the set it came from.
+    @discardableResult
+    mutating func putBeside(_ id: WindowID, leading: Bool) -> Int? {
+        guard currentSet.windows.count == 1, let from = pullIn(id, axis: .vertical) else { return nil }
+        currentSet.ratio = 0.5
+        if leading { currentSet.windows.reverse() }
+        return from
+    }
+
     /// Only, like vim's Ctrl-w o: keep the focused window, move the other to
     /// a new set. Returns where it went, or nil when nothing moved.
     @discardableResult

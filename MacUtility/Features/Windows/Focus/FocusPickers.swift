@@ -737,11 +737,13 @@ final class ShelfPanel {
     private var revealTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
     private let presence = Presence()
+    private let drag: ShelfDrag
 
     init(controller: FocusController) {
         self.controller = controller
         // Key-capable so a click on a card lands on the first try.
         panel = FocusKeyPanel.make()
+        drag = ShelfDrag(controller: controller)
     }
 
     func show(on screen: NSScreen) {
@@ -755,6 +757,12 @@ final class ShelfPanel {
         let hosting = NSHostingView(rootView: ShelfView(sets: sets, controller: controller, presence: presence) { [weak self] number in
             self?.hide()
             self?.controller.goTo(number)
+        } dragMoved: { [weak self] id in
+            guard let self else { return }
+            self.drag.move(id, overShelf: self.panel.frame.contains(NSEvent.mouseLocation))
+        } dragEnded: { [weak self] in
+            // Dropped: the shelf goes. Cancelled: it stays until the pointer leaves.
+            if self?.drag.end() == true { self?.hide() }
         })
         let size = hosting.fittingSize
         hosting.frame.size = size
@@ -773,7 +781,7 @@ final class ShelfPanel {
 
     func hide() {
         revealTask?.cancel()
-        guard panel.isVisible, presence.isPresented else { return }
+        guard panel.isVisible, presence.isPresented, !drag.isDragging else { return }
         withAnimation(.easeIn(duration: 0.16)) { presence.isPresented = false }
         hideTask?.cancel()
         hideTask = Task { [weak self] in
@@ -823,6 +831,15 @@ private struct ShelfView: View {
     let controller: FocusController
     let presence: Presence
     let choose: (Int) -> Void
+    /// A window is being dragged out of a card.
+    let dragMoved: (WindowID) -> Void
+    let dragEnded: () -> Void
+
+    @State private var dragging = false
+
+    /// Card padding and preview width, to tell which half was grabbed.
+    private static let cardPadding: CGFloat = 6
+    private static let previewWidth: CGFloat = 140
 
     // Read through the controller so cards update as fresh captures land.
     private var thumbnails: [WindowID: NSImage] { controller.thumbnails }
@@ -830,23 +847,43 @@ private struct ShelfView: View {
     var body: some View {
         VStack(spacing: 10) {
             ForEach(sets) { set in
-                Button { choose(set.number) } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        SetPreview(set: set, thumbnails: thumbnails, cornerRadius: 7)
-                            .frame(width: 140)
-                        HStack(spacing: 8) {
-                            SetBadge(number: set.number, size: 20)
-                            Text(set.name).font(.callout.weight(.semibold)).lineLimit(1)
-                        }
-                        if set.windows.count > 1 {
-                            Text(set.apps).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        }
+                VStack(alignment: .leading, spacing: 6) {
+                    SetPreview(set: set, thumbnails: thumbnails, cornerRadius: 7)
+                        .frame(width: Self.previewWidth)
+                    HStack(spacing: 8) {
+                        SetBadge(number: set.number, size: 20)
+                        Text(set.name).font(.callout.weight(.semibold)).lineLimit(1)
                     }
-                    .padding(6)
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    if set.windows.count > 1 {
+                        Text(set.apps).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
-                .buttonStyle(.plain)
+                .padding(Self.cardPadding)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                // A click goes to the set; a drag takes a window out of it.
+                .onTapGesture { if !dragging { choose(set.number) } }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 6)
+                        .onChanged { value in
+                            guard let id = window(in: set, grabbedAt: value.startLocation) else { return }
+                            dragging = true
+                            dragMoved(id)
+                        }
+                        .onEnded { _ in
+                            dragEnded()
+                            // After the click this mouse-up may also make.
+                            Task { @MainActor in dragging = false }
+                        }
+                )
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { choose(set.number) }
             }
+            Text("Drag a window onto the screen to swap it in")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             Text("\(KeyboardShortcuts.Name.focusLeaderLabel) Space for all sets")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -861,5 +898,14 @@ private struct ShelfView: View {
         // Slides in from the left edge.
         .offset(x: presence.isPresented ? 0 : -220)
         .opacity(presence.isPresented ? 1 : 0.6)
+    }
+
+    /// The window under the point where the drag started: the left or right
+    /// tile of a split card (as `SetPreview` draws it), else the one shown.
+    private func window(in set: SetSummary, grabbedAt point: CGPoint) -> WindowID? {
+        guard let first = set.windows.first else { return nil }
+        guard set.isSplit, set.windows.count == 2 else { return first.id }
+        let x = point.x - Self.cardPadding
+        return x < Self.previewWidth * set.ratio ? first.id : set.windows[1].id
     }
 }

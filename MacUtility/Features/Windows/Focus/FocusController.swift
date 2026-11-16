@@ -1049,8 +1049,9 @@ final class FocusController {
         return state.currentSet.focused
     }
 
-    func replace(with other: WindowID) {
-        guard isRunning, let target = focusedWindow(), target != other else { return }
+    /// `other` trades places with `target`, the focused window by default.
+    func replace(with other: WindowID, target: WindowID? = nil) {
+        guard isRunning, let target = target ?? focusedWindow(), target != other else { return }
         let before = state
         guard let went = state.replace(target, with: other) else { return }
         zoomed = nil
@@ -1176,6 +1177,31 @@ final class FocusController {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+    }
+
+    // MARK: Dragging from the shelf
+
+    /// What dropping a shelf card's window at `point` (screen coordinates)
+    /// would do on the current set.
+    func shelfDrop(at point: CGPoint) -> StageDrop? {
+        guard isRunning, openSplit == nil else { return nil }
+        let axPoint = CGPoint(x: point.x, y: primaryHeight - point.y)
+        return layout.drop(at: axPoint, on: state.currentSet, zoomed: zoomed)
+    }
+
+    /// A window from another set, dropped on the stage.
+    func drop(_ id: WindowID, _ drop: StageDrop) {
+        guard isRunning, let from = state.setNumber(of: id), from != state.current else { return }
+        switch drop {
+        case let .swap(target, _):
+            replace(with: id, target: target)
+        case .open:
+            open(id)
+        case let .beside(leading, _):
+            guard state.putBeside(id, leading: leading) != nil else { return }
+            zoomed = nil
+            apply()
+        }
     }
 
     func showShelf() {
