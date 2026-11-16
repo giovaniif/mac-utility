@@ -63,6 +63,11 @@ final class FocusController {
     @ObservationIgnored private var overflow: Set<WindowID> = []
     /// Minimized or hidden windows and the set they come back to.
     @ObservationIgnored private var away: [WindowID: Int] = [:]
+    /// Background tabs that had a slot of their own, and the set they come
+    /// back to if they show again with no tab to swap with.
+    @ObservationIgnored private var backgrounded: [WindowID: Int] = [:]
+    /// New windows already looked at twice (see `windowAppeared`).
+    @ObservationIgnored private var rechecked: Set<WindowID> = []
     @ObservationIgnored private var ownChangeUntil: [WindowID: Date] = [:]
     @ObservationIgnored private var focusMutedUntil = Date.distantPast
     @ObservationIgnored private var zoomed: WindowID?
@@ -313,10 +318,13 @@ final class FocusController {
     /// `recovering` keeps every set's windows that still exist, even if
     /// their app doesn't answer Accessibility yet or macOS moved them.
     private func adoptAll(recovering: Bool = false) {
+        let onScreen = WindowRegistry.onScreenWindowIDs()
         let windows = registry.windowsFrontToBack().filter { window in
             if recovering, state.contains(window.id) { return true }
-            return isManageable(window) && (state.contains(window.id) || isOnDisplay(window))
+            // Background tabs aren't shown, so they get no set of their own.
+            return isManageable(window) && (state.contains(window.id) || isOnDisplay(window) && onScreen.contains(window.id))
         }
+        for window in registry.windows.values { lastPID[window.id] = window.pid }
         var keep = Set(windows.map(\.id))
         if recovering { keep.formUnion(WindowRegistry.existingWindowIDs().intersection(state.allWindows)) }
         state.prune(keeping: keep)
@@ -395,6 +403,7 @@ final class FocusController {
     func apply(focus: Bool = true) {
         guard isRunning, !locked else { return }
         log.debug("trace apply focus \(focus) current \(self.state.current)")
+        reconcileTabs()
         let set = state.currentSet
         appliedWidthCap = Self.widthCap
         appliedGap = Self.gap
@@ -495,7 +504,10 @@ final class FocusController {
         switch event {
         case let .appeared(id):
             if let pid = registry.windows[id]?.pid { lastPID[id] = pid }
-            if let window = registry.windows[id], !state.contains(id), isPopup(window) {
+            // A tab over its group's window is no popup, however small, and
+            // a background tab isn't shown: raising it would select it.
+            if let window = registry.windows[id], !state.contains(id), !hasManagedTwin(window),
+               WindowRegistry.onScreenWindowIDs().contains(id), isPopup(window) {
                 // Popups open on top of the stage, after any re-tiling.
                 Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(150))
@@ -540,8 +552,18 @@ final class FocusController {
 
     private func windowAppeared(_ id: WindowID) {
         guard !state.contains(id), !overflow.contains(id), let window = registry.windows[id] else { return }
+        let onScreen = WindowRegistry.onScreenWindowIDs()
         // A new tab is the same window to the user: it takes its group's slot.
-        if adoptTab(window) { return }
+        if adoptTab(window, onScreen: onScreen) { return }
+        // Not shown: a background tab (it takes the slot when it's selected),
+        // or a window that isn't ordered in yet. A new tab right over its
+        // group's window may be reported before that window is ordered out.
+        // Either way, look again in a moment.
+        if !onScreen.contains(id) {
+            recheck(id)
+            return
+        }
+        if hasManagedTwin(window), recheck(id) { return }
         guard isManageable(window), isOnDisplay(window) else { return }
 
         if let pending = pendingSplit, pending.bundleID == window.bundleID, Date() < pending.until, let axis = openSplit {
@@ -586,56 +608,170 @@ final class FocusController {
 
     // MARK: Tabs
 
-    /// Native tabs (Terminal, Finder, Xcode…) are separate windows to
-    /// Accessibility, but only the selected one is shown. A tab group holds
-    /// one slot, filled by whichever tab is visible.
+    // Native tabs (Terminal, Ghostty, Xcode…) are separate windows to
+    // Accessibility, but only the selected one is shown; the window server
+    // orders the others out. A tab group holds one slot, filled by whichever
+    // tab is showing. If a hidden tab held it, Focus would park the hidden
+    // one and leave the showing one on the stage of every set.
+
+    /// A tab bar is the surest sign, but apps that draw their tabs in the
+    /// title bar may not show one where we look, and it goes away when one
+    /// tab is left.
     private func isTabbed(_ window: TrackedWindow) -> Bool {
         window.element.elements(kAXChildrenAttribute).contains { $0.string(kAXRoleAttribute) == kAXTabGroupRole }
     }
 
-    private func sameFrame(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2 && abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
+    private func sameFrame(_ a: CGRect?, _ b: CGRect?) -> Bool {
+        guard let a, let b else { return false }
+        return abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2 && abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
     }
 
-    /// The managed tab sharing `window`'s tab group, if any.
-    private func tabSibling(of window: TrackedWindow) -> WindowID? {
-        guard isTabbed(window), let frame = window.frame else { return nil }
+    /// A tab behind another one: the app still lists it and it isn't
+    /// minimized or hidden, yet it isn't shown while the app shows another
+    /// window. Windows on other Spaces aren't listed, so they don't count.
+    private func isBackground(_ window: TrackedWindow, onScreen: Set<WindowID>) -> Bool {
+        guard !onScreen.contains(window.id), !window.isMinimized, !window.isFullScreen, window.app?.isHidden != true,
+              registry.windows.values.contains(where: { $0.pid == window.pid && $0.id != window.id && onScreen.contains($0.id) })
+        else { return false }
+        return registry.isListed(window)
+    }
+
+    /// Could take a slot from another tab: shown, and not left out on purpose.
+    /// Popups aren't ruled out: a tab in a split pane is small enough to be
+    /// taken for one, and the same frame as its group's tab says it isn't.
+    private func canTakeSlot(_ window: TrackedWindow, onScreen: Set<WindowID>) -> Bool {
+        onScreen.contains(window.id) && !state.contains(window.id) && !floating.contains(window.id)
+            && !overflow.contains(window.id) && away[window.id] == nil && !window.isMinimized
+    }
+
+    /// The managed tab sharing `window`'s tab group, if any: same app, same
+    /// frame, and either `window` has a tab bar or the other one just went
+    /// to the background.
+    private func tabSibling(of window: TrackedWindow, onScreen: Set<WindowID>) -> WindowID? {
+        guard onScreen.contains(window.id), let frame = window.frame else { return nil }
+        let tabbed = isTabbed(window)
         return registry.windows.values.first { other in
-            other.pid == window.pid && other.id != window.id && state.contains(other.id) && !away.keys.contains(other.id)
-                && (other.frame.map { sameFrame($0, frame) } ?? false || homes[other.id].map { sameFrame($0, frame) } ?? false)
+            other.pid == window.pid && other.id != window.id && state.contains(other.id) && away[other.id] == nil
+                && (sameFrame(other.frame, frame) || sameFrame(homes[other.id], frame))
+                && (tabbed || isBackground(other, onScreen: onScreen))
         }?.id
     }
 
+    /// A managed window of the same app exactly where `window` is: maybe
+    /// the tab it was opened beside, not yet ordered out.
+    private func hasManagedTwin(_ window: TrackedWindow) -> Bool {
+        guard let frame = window.frame else { return false }
+        return registry.windows.values.contains { other in
+            other.pid == window.pid && other.id != window.id && state.contains(other.id) && sameFrame(other.frame, frame)
+        }
+    }
+
+    /// Looks at a new window once more in a moment. False if it already had
+    /// its second look.
+    @discardableResult
+    private func recheck(_ id: WindowID) -> Bool {
+        guard rechecked.insert(id).inserted else { return false }
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, self.isRunning, !self.locked else { return }
+            self.windowAppeared(id)
+        }
+        return true
+    }
+
+    /// `new`, another tab of `old`'s group, takes `old`'s exact slot.
+    private func takeSlot(of old: WindowID, for new: WindowID) {
+        state.swap(old, for: new)
+        if parked.remove(old) != nil { parked.insert(new) }
+        if let home = homes[old] { homes[new] = home }
+        if zoomed == old { zoomed = new }
+        backgrounded[new] = nil
+        seen.insert(new)
+        popups.remove(new)
+    }
+
     /// Swaps `window` into its tab group's slot. True when it was a tab.
-    private func adoptTab(_ window: TrackedWindow) -> Bool {
-        guard let sibling = tabSibling(of: window) else { return false }
+    private func adoptTab(_ window: TrackedWindow, onScreen: Set<WindowID>? = nil) -> Bool {
+        let onScreen = onScreen ?? WindowRegistry.onScreenWindowIDs()
+        guard canTakeSlot(window, onScreen: onScreen), let sibling = tabSibling(of: window, onScreen: onScreen) else { return false }
         let number = state.setNumber(of: sibling)
-        state.swap(sibling, for: window.id)
-        if parked.remove(sibling) != nil { parked.insert(window.id) }
-        homes[window.id] = homes[sibling]
+        takeSlot(of: sibling, for: window.id)
         if number == state.current { apply(focus: false) } else { scheduleSave() }
         return true
     }
 
-    /// A managed tab closed: the group's next visible tab takes the slot.
-    private func handOffTab(_ id: WindowID) -> Bool {
-        guard state.contains(id), let pid = registry.windows[id]?.pid ?? lastPID[id],
-              let next = registry.focusedWindow(of: pid), next != id, !state.contains(next),
-              let window = registry.windows[next], isTabbed(window),
-              let frame = window.frame, let home = homes[id], sameFrame(frame, home) else { return false }
-        state.swap(id, for: next)
-        homes[next] = home
+    /// Before placing anything: every slot held by a background tab goes to
+    /// the tab showing in its place. That catches tab switches whose events
+    /// came too early or not at all. A background tab with no tab showing
+    /// in its place (its group's showing tab is in another set) gives up
+    /// its slot.
+    private func reconcileTabs() {
+        let onScreen = WindowRegistry.onScreenWindowIDs()
+        for id in state.allWindows {
+            guard let window = registry.windows[id], isBackground(window, onScreen: onScreen) else { continue }
+            let shown = registry.windows.values.filter { $0.pid == window.pid && $0.id != id && canTakeSlot($0, onScreen: onScreen) }
+            let focused = registry.focusedWindow(of: window.pid)
+            if let next = shown.first(where: { sameFrame($0.frame, window.frame) || sameFrame($0.frame, homes[id]) })
+                ?? shown.first(where: { $0.id == focused && !popups.contains($0.id) }) {
+                log.notice("focus: tab \(next.id) takes the slot of background tab \(id)")
+                takeSlot(of: id, for: next.id)
+            } else if let number = state.remove(id) {
+                log.notice("focus: background tab \(id) leaves set \(number)")
+                backgrounded[id] = number
+                parked.remove(id)
+            }
+        }
+    }
+
+    /// Where a closed window sat, so the tab shown in its place can take it.
+    private struct Vacancy {
+        let pid: pid_t
+        let number: Int
+        let index: Int
+        let home: CGRect
+        let wasFocused: Bool
+    }
+
+    private func vacancy(of id: WindowID) -> Vacancy? {
+        guard let pid = registry.windows[id]?.pid ?? lastPID[id], let number = state.setNumber(of: id),
+              let index = state[set: number].windows.firstIndex(of: id), let home = homes[id] else { return nil }
+        return Vacancy(pid: pid, number: number, index: index, home: home, wasFocused: state[set: number].focused == id)
+    }
+
+    /// A managed tab closed: the group's tab now showing in its place takes
+    /// the slot. Returns false when no such tab shows (yet).
+    private func fill(_ vacancy: Vacancy, closed: WindowID) -> Bool {
+        let onScreen = WindowRegistry.onScreenWindowIDs()
+        guard let next = registry.windows.values.first(where: { window in
+            window.pid == vacancy.pid && window.id != closed && canTakeSlot(window, onScreen: onScreen)
+                && sameFrame(window.frame, vacancy.home)
+        })?.id else { return false }
+        if state.contains(closed) {
+            takeSlot(of: closed, for: next)
+            return true
+        }
+        guard state[set: vacancy.number].hasRoom else { return false }
+        state[set: vacancy.number].insert(next, at: vacancy.index)
+        if vacancy.wasFocused { state[set: vacancy.number].focused = next }
+        homes[next] = vacancy.home
+        if vacancy.number != state.current { parked.insert(next) }
+        backgrounded[next] = nil
+        seen.insert(next)
+        popups.remove(next)
         return true
     }
 
     private func windowGone(_ id: WindowID) {
-        let handedOff = handOffTab(id)
+        let vacancy = self.vacancy(of: id)
+        let handedOff = vacancy.map { fill($0, closed: id) } ?? false
         lastPID[id] = nil
         floating.remove(id)
         popups.remove(id)
         seen.remove(id)
         overflow.remove(id)
         away[id] = nil
+        backgrounded[id] = nil
+        rechecked.remove(id)
         homes[id] = nil
         parked.remove(id)
         ownChangeUntil[id] = nil
@@ -646,12 +782,29 @@ final class FocusController {
             apply(focus: false)
         } else if let number = state.remove(id) {
             apply(focus: number == state.current)
+            // The next tab may not be ordered in yet when the closed one is
+            // reported gone. Give it a moment to show up in its place.
+            if let vacancy {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard let self, self.isRunning, !self.locked, self.fill(vacancy, closed: id) else { return }
+                    self.apply(focus: false)
+                }
+            }
         }
     }
 
     private func focusChanged(_ id: WindowID) {
         log.debug("trace focus \(id) muted \(Date() <= self.focusMutedUntil) set \(self.state.setNumber(of: id) ?? -1) current \(self.state.current)")
-        if !state.contains(id), let window = registry.windows[id], adoptTab(window) { return }
+        if !state.contains(id), let window = registry.windows[id] {
+            if adoptTab(window) { return }
+            // A background tab that had its own slot is showing again with
+            // no managed tab in its group to swap with: back to its set.
+            if let number = backgrounded.removeValue(forKey: id) {
+                add(id, preferred: number, activate: true)
+                return
+            }
+        }
         guard Date() > focusMutedUntil, state.contains(id) else { return }
         let changed = state.focus(id)
         if changed {

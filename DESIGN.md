@@ -103,6 +103,7 @@ The screen shows one small group of windows at a time. Everything else is parked
   - A window from another set trades places with the focused window.
   - A new app pushes the focused window into a new set.
   - The HUD offers Undo for 5 s.
+- **Native tabs** (Terminal, Ghostty, Xcode…) hold one slot per tab group, filled by the tab that's showing. Accessibility reports each tab as its own window, so Focus tells them apart by what the window server shows: a background tab is still listed by its app but isn't on screen. Switching or closing tabs hands the slot to the tab now showing in the same place. A background tab never gets a set of its own.
 - **Quitting an app** takes its windows out of their sets. When the app relaunches, its windows go back to their last set, matched by bundle ID plus window title, or by bundle ID alone for apps with one window.
 - **Pinning:** an app can be pinned to a set (Settings, or the switcher's context menu). Its new windows go there instead of following the new-window rule.
 - **Previous set:** `⌃B` `⇥` goes back to the last set you were in. Doing it again comes back, like i3.
