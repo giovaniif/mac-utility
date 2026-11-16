@@ -69,6 +69,8 @@ final class ScreenCapture {
     }
 
     /// Runs one capture flow at a time, after checking Screen Recording.
+    /// Earlier captures' previews hide while you pick and capture, and come
+    /// back with the new one; a recording keeps them hidden until it stops.
     private func run(_ flow: @escaping @MainActor () async throws -> Void) {
         guard !busy else { return }
         permissions.refresh()
@@ -77,8 +79,12 @@ final class ScreenCapture {
             return
         }
         busy = true
+        previews.setHidden(true)
         Task {
-            defer { busy = false }
+            defer {
+                busy = false
+                if !isRecording { previews.setHidden(false) }
+            }
             do {
                 try await flow()
             } catch {
@@ -119,7 +125,6 @@ final class ScreenCapture {
 
     private func startRecording(_ target: CaptureTarget) async throws {
         recordArea = target.rect
-        previews.setHidden(true)
         let control = RecordingControl { [weak self] action in self?.handle(action) }
         control.show(on: target.screen ?? NSScreen.underMouse ?? NSScreen.screens[0])
         self.control = control
@@ -229,6 +234,7 @@ final class ScreenCapture {
         isRecording = false
         isPaused = false
         tearDownAccessories()
+        defer { previews.setHidden(false) }
         let ok = await recording.stop()
         guard ok else {
             HUD.show("Recording failed")
@@ -246,6 +252,5 @@ final class ScreenCapture {
         control = nil
         camera = nil
         keystrokes = nil
-        previews.setHidden(false)
     }
 }

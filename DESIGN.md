@@ -103,6 +103,7 @@ The screen shows one small group of windows at a time. Everything else is parked
   - A window from another set trades places with the focused window.
   - A new app pushes the focused window into a new set.
   - The HUD offers Undo for 5 s.
+- **Native tabs** (Terminal, Ghostty, Xcode…) hold one slot per tab group, filled by the tab that's showing. Accessibility reports each tab as its own window, so Focus tells them apart by what the window server shows: a background tab is still listed by its app but isn't on screen. Switching or closing tabs hands the slot to the tab now showing in the same place. A background tab never gets a set of its own.
 - **Quitting an app** takes its windows out of their sets. When the app relaunches, its windows go back to their last set, matched by bundle ID plus window title, or by bundle ID alone for apps with one window.
 - **Pinning:** an app can be pinned to a set (Settings, or the switcher's context menu). Its new windows go there instead of following the new-window rule.
 - **Previous set:** `⌃B` `⇥` goes back to the last set you were in. Doing it again comes back, like i3.
@@ -146,7 +147,7 @@ How it works:
 
 - **Menu bar:** the existing item gains the numbers of the sets that have windows, with the current one filled in. Clicking it opens the switcher.
 - **HUD:** doesn't show for plain set switches; the stage and the menu bar numbers already say where you are. It shows when a new window opens a new set because yours was full, when you send a window to another set, and after Replace. It shows the set number, name, apps and the occupied sets, then fades after 1.2 s. Built on the existing `HUD`.
-- **Shelf:** a strip of cards for the other sets at the left edge. It appears when the pointer rests at the edge for 150 ms or when the leader's key guide appears. Click a card to go there.
+- **Shelf:** a strip of cards for the other sets at the left edge. It appears when the pointer rests at the edge for 150 ms or when the leader's key guide appears. Click a card to go there. Drag a window out of a card onto the screen to bring it here: dropped on a window, the two trade places (with Undo, like Replace); on the outer third of a lone window, it opens beside it in an even split; on an empty set, it takes the stage. The landing spot is outlined while dragging; Esc or a drop anywhere else cancels.
 - **Switcher:** a full-screen 3×3 grid in which each set's position matches its number.
   - No search. `h` `j` `k` `l` or the arrows move through the grid, stopping at its edges; the pointer selects too. `Return` goes, `1`–`9` jump straight to a set (empty ones included), `Esc` closes.
   - Opening dims and blurs the stage and springs the grid in from 96%; closing eases out in 0.14 s.
@@ -197,7 +198,7 @@ How it works:
 ### Status
 
 - Decisions: split ⇄ stacked stays, an emptied set keeps the stage on it, and sets are named after their first app.
-- Everything in this section is built except dragging a shelf card onto a window to swap.
+- Everything in this section is built.
 - `xcodebuild test`: 27 of 27 pass. The app builds with no warnings and launches.
 - Not run end to end yet. Stage Manager is on on this Mac, so Focus refuses to start, and turning it off is your call. Nothing here has been checked against real windows: parking, raising, the crossfade, the leader panel taking keys, and the Dell plus MacBook layout.
 

@@ -103,6 +103,20 @@ final class WindowRegistry {
         return Set(list.compactMap { $0[kCGWindowNumber as String] as? WindowID })
     }
 
+    /// Windows the window server is showing on this Space. Parked windows
+    /// count: they're only moved, not ordered out. Background tabs,
+    /// minimized windows and other Spaces' windows don't.
+    static func onScreenWindowIDs() -> Set<WindowID> {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return Set(list.compactMap { $0[kCGWindowNumber as String] as? WindowID })
+    }
+
+    /// Whether the app still lists the window. Accessibility leaves out
+    /// windows on other Spaces but keeps an app's background tabs.
+    func isListed(_ window: TrackedWindow) -> Bool {
+        AXUIElementCreateApplication(window.pid).elements(kAXWindowsAttribute).contains { $0.windowID == window.id }
+    }
+
     /// Windows of every watched app, front to back as the window server
     /// orders them on screen.
     func windowsFrontToBack() -> [TrackedWindow] {

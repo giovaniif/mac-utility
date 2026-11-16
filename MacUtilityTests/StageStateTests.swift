@@ -270,6 +270,30 @@ struct StageStateTests {
         let data = try JSONEncoder().encode(state)
         #expect(try JSONDecoder().decode(StageState.self, from: data) == state)
     }
+
+    @Test func droppedBesideALoneWindowSplitsOnThatSide() {
+        var state = StageState()
+        state.add(1)
+        state[set: 2].insert(5)
+        state.currentSet.ratio = 0.7
+        #expect(state.putBeside(5, leading: true) == 2)
+        #expect(state[set: 1].windows == [5, 1])
+        #expect(state[set: 1].focused == 5)
+        #expect(state[set: 1].layout == .split)
+        #expect(state[set: 1].ratio == 0.5)
+        #expect(state[set: 2].isEmpty)
+    }
+
+    @Test func droppedBesideGoesRightAndNeedsALoneWindow() {
+        var state = StageState()
+        state.add(1)
+        state[set: 2].insert(5)
+        state[set: 2].insert(6)
+        #expect(state.putBeside(5, leading: false) == 2)
+        #expect(state[set: 1].windows == [1, 5])
+        #expect(state.putBeside(6, leading: false) == nil)
+        #expect(state[set: 2].windows == [6])
+    }
 }
 
 struct StageLayoutTests {
@@ -345,5 +369,42 @@ struct StageLayoutTests {
         #expect(origin == CGPoint(x: -799, y: 1079))
         let alone = StageLayout.parkingOrigin(size: CGSize(width: 800, height: 600), display: main, otherDisplays: [])
         #expect(alone == CGPoint(x: 1919, y: 1079))
+    }
+
+    @Test func dropOnALoneWindowSwapsInTheMiddleAndSplitsAtTheSides() {
+        var set = FocusSet()
+        set.insert(1)
+        // Desktop: the lone window is 240…1680 wide.
+        #expect(desktop.drop(at: CGPoint(x: 960, y: 500), on: set) == .swap(1, CGRect(x: 240, y: 37, width: 1440, height: 1031)))
+        let (left, right) = desktop.split(ratio: 0.5)
+        #expect(desktop.drop(at: CGPoint(x: 300, y: 500), on: set) == .beside(leading: true, pane: left))
+        // The margin beside a capped window counts as its side.
+        #expect(desktop.drop(at: CGPoint(x: 100, y: 500), on: set) == .beside(leading: true, pane: left))
+        #expect(desktop.drop(at: CGPoint(x: 1600, y: 500), on: set) == .beside(leading: false, pane: right))
+    }
+
+    @Test func dropOnASplitSwapsWithThePaneUnderThePointer() {
+        var set = FocusSet()
+        set.insert(1)
+        set.insert(2)
+        let frames = desktop.frames(for: set)
+        #expect(desktop.drop(at: CGPoint(x: 400, y: 500), on: set) == .swap(1, frames[1]!))
+        #expect(desktop.drop(at: CGPoint(x: 1500, y: 500), on: set) == .swap(2, frames[2]!))
+        // The gap between panes, and off the stage, do nothing.
+        #expect(desktop.drop(at: CGPoint(x: frames[1]!.maxX + 6, y: 500), on: set) == nil)
+        #expect(desktop.drop(at: CGPoint(x: 960, y: 5), on: set) == nil)
+    }
+
+    @Test func dropOnAStackedSetSwapsWithTheShownWindow() {
+        var set = FocusSet()
+        set.insert(1)
+        set.insert(2)
+        set.focused = 2
+        set.layout = .stacked
+        #expect(desktop.drop(at: CGPoint(x: 960, y: 500), on: set) == .swap(2, desktop.single))
+    }
+
+    @Test func dropOnAnEmptySetTakesTheStage() {
+        #expect(laptop.drop(at: CGPoint(x: 700, y: 400), on: FocusSet()) == .open(laptop.inner))
     }
 }

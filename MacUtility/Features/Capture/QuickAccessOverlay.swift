@@ -29,7 +29,8 @@ final class QuickAccessOverlay {
     /// Display the stack sits on; it follows the pointer between displays.
     private var screenID: CGDirectDisplayID?
     private var followTimer: Timer?
-    private var hiddenForRecording = false
+    /// Out of the way while a capture is being picked, taken or recorded.
+    private var hiddenForCapture = false
 
     init() {
         panel = NSPanel(
@@ -55,9 +56,11 @@ final class QuickAccessOverlay {
     /// never blinks.
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
 
-    /// Keeps the stack off screen while recording, then brings it back.
+    /// Keeps the stack off screen during a capture, then brings it back
+    /// with any card added meanwhile.
     func setHidden(_ hidden: Bool) {
-        hiddenForRecording = hidden
+        guard hidden != hiddenForCapture else { return }
+        hiddenForCapture = hidden
         if hidden {
             panel.fadeOut()
         } else if !model.results.isEmpty {
@@ -72,7 +75,8 @@ final class QuickAccessOverlay {
     func show(_ result: CaptureResult) {
         if model.results.isEmpty { screenID = NSScreen.underMouse?.displayID }
         layout(count: model.results.count + 1)
-        if !panel.isVisible { panel.orderFrontRegardless() }
+        // While hidden, the card waits for `setHidden(false)`.
+        if !panel.isVisible, !hiddenForCapture { panel.orderFrontRegardless() }
         withAnimation(.easeOut(duration: 0.3)) { model.results.insert(result, at: 0) }
         startFollowing()
     }
@@ -92,7 +96,7 @@ final class QuickAccessOverlay {
     }
 
     private func followPointer() {
-        guard !model.results.isEmpty, !hiddenForRecording, panel.isVisible,
+        guard !model.results.isEmpty, !hiddenForCapture, panel.isVisible,
               let target = NSScreen.underMouse?.displayID, target != screenID
         else { return }
         screenID = target

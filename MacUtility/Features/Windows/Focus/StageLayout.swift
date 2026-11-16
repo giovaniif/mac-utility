@@ -1,5 +1,21 @@
 import CoreGraphics
 
+/// A window dragged from the shelf onto the stage, and the rect to outline.
+enum StageDrop: Equatable {
+    /// Trade places with this window.
+    case swap(WindowID, CGRect)
+    /// Join the lone window, on its left (`leading`) or right.
+    case beside(leading: Bool, pane: CGRect)
+    /// The set is empty: take the stage.
+    case open(CGRect)
+
+    var rect: CGRect {
+        switch self {
+        case let .swap(_, rect), let .beside(_, rect), let .open(rect): rect
+        }
+    }
+}
+
 /// Frame math for the stage. All rects use Accessibility coordinates: origin
 /// at the top-left of the primary display, y growing down.
 struct StageLayout {
@@ -59,6 +75,24 @@ struct StageLayout {
         guard usable > 0 else { return 0.5 }
         let share = Double((axis == .vertical ? size.width : size.height) / usable)
         return isFirst ? share : 1 - share
+    }
+
+    /// What dropping a window from another set at `point` would do: trade
+    /// places with the window there, join a lone window on one side (its
+    /// outer thirds), or fill an empty stage. Nil between panes or off stage.
+    func drop(at point: CGPoint, on set: FocusSet, zoomed: WindowID? = nil) -> StageDrop? {
+        guard inner.contains(point) else { return nil }
+        let visible = frames(for: set, zoomed: zoomed)
+        guard let first = set.windows.first else { return .open(inner) }
+        if set.windows.count == 1, let frame = visible[first] {
+            let third = frame.width / 3
+            let (left, right) = split(ratio: 0.5)
+            if point.x < frame.minX + third { return .beside(leading: true, pane: left) }
+            if point.x > frame.maxX - third { return .beside(leading: false, pane: right) }
+            return .swap(first, frame)
+        }
+        guard let hit = visible.first(where: { $0.value.contains(point) }) else { return nil }
+        return .swap(hit.key, hit.value)
     }
 
     /// Where a parked window goes: a corner of the managed display with a
