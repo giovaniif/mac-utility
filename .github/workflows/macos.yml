@@ -3,11 +3,19 @@
 # the Developer ID when the secrets are set (see .github/scripts/macos-build.sh).
 # Run it by hand with "notarize" for a build that opens on any Mac.
 #
+# Releasing: bump the version, add its CHANGELOG.md section, push to main, then
+# push the tag v<version>. The tag builds and notarizes the DMG, signs it for
+# over-the-air updates, writes appcast.xml and publishes the GitHub release.
+# Installed copies find the update through releases/latest/download/appcast.xml.
+#
 # On the Mac: gh run download -R giovaniif/mac-utility -n MacUtility <run-id>
 name: macOS
 
 on:
   push:
+    branches: ["**"]
+    # Path filters don't apply to tags: a release tag always builds.
+    tags: ["v*"]
     paths: ["MacUtility/**", "MacUtilityTests/**", "project.yml", ".github/workflows/macos.yml", ".github/scripts/macos-build.sh"]
   pull_request:
     paths: ["MacUtility/**", "MacUtilityTests/**", "project.yml", ".github/workflows/macos.yml", ".github/scripts/macos-build.sh"]
@@ -45,7 +53,8 @@ jobs:
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
-          NOTARIZE: ${{ inputs.notarize && '1' || '0' }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTARIZE: ${{ (inputs.notarize || startsWith(github.ref, 'refs/tags/v')) && '1' || '0' }}
         run: .github/scripts/macos-build.sh
 
       - uses: actions/upload-artifact@v6
@@ -54,6 +63,8 @@ jobs:
           path: |
             MacUtility-*.zip
             MacUtility-*.dmg
+            appcast.xml
+            release-notes.md
           retention-days: 14
           compression-level: 0
 
@@ -85,3 +96,32 @@ jobs:
             -derivedDataPath build -clonedSourcePackagesDirPath build/SourcePackages \
             CODE_SIGN_IDENTITY=- \
             | xcbeautify --renderer github-actions
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: MacUtility
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          dmg="MacUtility-$version.dmg"
+          test -f "$dmg" && test -f appcast.xml && test -f release-notes.md
+          {
+            echo "macOS: signed with Developer ID and notarized. Installed copies update themselves; for a first install, download \`$dmg\`, open it and drag Mac Utility into Applications."
+            echo
+            cat release-notes.md
+            echo
+            echo "Windows and Linux builds are unchanged; get them from 0.1.9."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "Mac Utility $version" --notes-file notes.md "$dmg" appcast.xml

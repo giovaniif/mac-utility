@@ -7,7 +7,7 @@ struct MacUtilityApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContent(actions: appDelegate.actions)
+            MenuBarContent(actions: appDelegate.actions, updater: appDelegate.updater)
         } label: {
             MenuBarLabel(focus: appDelegate.actions.focus)
         }
@@ -21,6 +21,7 @@ struct MacUtilityApp: App {
 /// Tray panel: switches that act right away. Feature toggles and shortcuts live in Settings.
 struct MenuBarContent: View {
     let actions: FeatureActions
+    let updater: Updater
     @AppStorage(Feature.keyboardCleaning.defaultsKey) private var keyboardCleaning = true
     @AppStorage(Feature.screenCapture.defaultsKey) private var screenCapture = true
 
@@ -55,6 +56,17 @@ struct MenuBarContent: View {
                 }
             }
             Divider()
+            Button {
+                updater.checkForUpdates()
+            } label: {
+                if let version = updater.available {
+                    Label("Update to \(version)…", systemImage: "arrow.down.circle.fill")
+                } else {
+                    Text("Check for Updates…")
+                }
+            }
+            .buttonStyle(.link)
+            .help("Mac Utility \(updater.version)")
             HStack {
                 SettingsLink { Text("Settings…") }
                     // Also when Settings is already open, somewhere behind.

@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissions = Permissions()
+    /// Started at launch so it checks for updates on its schedule.
+    let updater = Updater()
     lazy var actions = FeatureActions(permissions: permissions)
     private var onboardingWindow: NSWindow?
 
