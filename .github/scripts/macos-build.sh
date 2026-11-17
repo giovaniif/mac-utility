@@ -9,7 +9,9 @@
 #
 # Secrets (env): MACOS_CERTIFICATE (base64 .p12 with the Developer ID
 # Application cert and key), MACOS_CERTIFICATE_PASSWORD. For NOTARIZE=1 also
-# MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_PASSWORD (app-specific password).
+# MACOS_NOTARY_APPLE_ID, MACOS_NOTARY_PASSWORD (app-specific password), and
+# SPARKLE_PRIVATE_KEY (base64 ed25519 seed) to sign the over-the-air update:
+# then it also writes appcast.xml for the release, notes from CHANGELOG.md.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -70,6 +72,20 @@ fi
 echo "Signing as: $identity"
 
 build CODE_SIGN_IDENTITY="$identity" OTHER_CODE_SIGN_FLAGS="--timestamp --keychain $keychain"
+
+# Sparkle ships its helpers signed by its own developers. Notarization wants
+# every piece signed by us with the hardened runtime, innermost first, then
+# the app again around them (Sparkle's documented order).
+sign() { codesign --force --sign "$identity" --options runtime --timestamp --keychain "$keychain" "$@"; }
+fw="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$fw" ]; then
+  [ -e "$fw/Versions/B/XPCServices/Installer.xpc" ] && sign "$fw/Versions/B/XPCServices/Installer.xpc"
+  [ -e "$fw/Versions/B/XPCServices/Downloader.xpc" ] && sign --preserve-metadata=entitlements "$fw/Versions/B/XPCServices/Downloader.xpc"
+  sign "$fw/Versions/B/Autoupdate"
+  sign "$fw/Versions/B/Updater.app"
+  sign "$fw"
+  sign --preserve-metadata=entitlements,requirements,flags "$APP"
+fi
 codesign --verify --deep --strict --verbose=2 "$APP"
 if codesign -d --entitlements - "$APP" 2>/dev/null | grep -q get-task-allow; then
   echo "::error::The app has get-task-allow; notarization would reject it"
@@ -116,6 +132,52 @@ if [ "${NOTARIZE:-0}" = 1 ]; then
   xcrun stapler staple "$dmg"
   spctl --assess --type open --context context:primary-signature -v "$dmg"
   shasum -a 256 "$dmg"
+
+  # A release tag must match the version being built.
+  if [[ "${GITHUB_REF:-}" == refs/tags/v* ]] && [ "${GITHUB_REF#refs/tags/v}" != "$version" ]; then
+    echo "::error::Tag ${GITHUB_REF#refs/tags/} doesn't match MARKETING_VERSION $version"
+    exit 1
+  fi
+
+  if [ -n "${SPARKLE_PRIVATE_KEY:-}" ]; then
+    sign_update="$(find "$OUT/SourcePackages/artifacts" -type f -name sign_update -perm -u+x | head -1)"
+    if [ -z "$sign_update" ]; then
+      echo "::error::Sparkle's sign_update wasn't found in the package artifacts"
+      exit 1
+    fi
+    key="$tmp/sparkle.key"
+    (umask 077; printf '%s\n' "$SPARKLE_PRIVATE_KEY" > "$key")
+    signature="$("$sign_update" --ed-key-file "$key" "$dmg")"
+    rm -f "$key"
+    echo "Update signature: $signature"
+    build_number=$(sed -n 's/.*CURRENT_PROJECT_VERSION: "\(.*\)"/\1/p' project.yml)
+    # The notes are this version's section of CHANGELOG.md, also used for
+    # the GitHub release.
+    awk -v v="$version" '$0 ~ "^## " v "( |$)" { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > release-notes.md
+    if ! grep -q '[^[:space:]]' release-notes.md; then
+      echo "::error::CHANGELOG.md has no section for $version"
+      exit 1
+    fi
+    notes_html="$(python3 .github/scripts/notes-html.py < release-notes.md)"
+    cat > appcast.xml <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Mac Utility</title>
+    <item>
+      <title>Mac Utility $version</title>
+      <pubDate>$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+      <sparkle:version>$build_number</sparkle:version>
+      <sparkle:shortVersionString>$version</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[$notes_html]]></description>
+      <enclosure url="https://github.com/giovaniif/mac-utility/releases/download/v$version/$dmg" type="application/octet-stream" $signature/>
+    </item>
+  </channel>
+</rss>
+XML
+    cat appcast.xml
+  fi
 fi
 
 ditto -c -k --keepParent "$APP" "$zip"

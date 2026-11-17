@@ -10,6 +10,9 @@ packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
     from: 7.0.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.6.0
 targets:
   MacUtility:
     type: application
@@ -18,6 +21,7 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: GRDB
+      - package: Sparkle
     info:
       path: MacUtility/Info.plist
       properties:
@@ -28,6 +32,13 @@ targets:
         NSCameraUsageDescription: Shows your camera in a bubble while you record the screen.
         NSMicrophoneUsageDescription: Records your voice along with screen recordings.
         NSHumanReadableCopyright: ""
+        # Over-the-air updates (Sparkle): the feed is attached to the latest
+        # GitHub release, and updates must be signed with the matching
+        # private key (repo secret SPARKLE_PRIVATE_KEY).
+        SUFeedURL: https://github.com/giovaniif/mac-utility/releases/latest/download/appcast.xml
+        SUPublicEDKey: quhPp4IswK9Um74AamwOt4uh8BMmhT2LC5W9FwDC7+o=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 21600
     entitlements:
       path: MacUtility/MacUtility.entitlements
       properties:
@@ -37,8 +48,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtility
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "0.1.14"
-        CURRENT_PROJECT_VERSION: "15"
+        MARKETING_VERSION: "0.1.15"
+        CURRENT_PROJECT_VERSION: "16"
         ENABLE_HARDENED_RUNTIME: YES
         # Same identity as releases, so permission grants are shared between
         # the installed app and local builds.

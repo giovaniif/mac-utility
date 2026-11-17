@@ -6,7 +6,7 @@ Native Swift (SwiftUI + AppKit), macOS 14 or later. Every feature can be switche
 
 ## Download
 
-Grab the DMG from the [latest release](https://github.com/giovaniif/mac-utility/releases/latest) and drag Mac Utility into Applications. It's signed with Developer ID and notarized by Apple, and runs natively on Apple silicon and Intel.
+Grab the DMG from the [latest release](https://github.com/giovaniif/mac-utility/releases/latest) and drag Mac Utility into Applications. It's signed with Developer ID and notarized by Apple, and runs natively on Apple silicon and Intel. From 0.1.15 on it updates itself: it checks every 6 hours and offers to install and relaunch, or use "Check for Updates…" in the menu.
 
 ## Features
 
@@ -106,7 +106,9 @@ xcodebuild -project MacUtility.xcodeproj -scheme MacUtility -configuration Debug
 open build/Build/Products/Debug/MacUtility.app
 ```
 
-To make a signed, notarized DMG in `build-release/` (needs a Developer ID Application certificate and `notarytool` credentials saved as `mac-utility`):
+Releases are made by CI. Bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml` (and the version in `desktop/Cargo.toml` and `Cargo.lock`), add the version's section to `CHANGELOG.md`, push to `main`, then push the tag `v<version>`. The macOS workflow builds, notarizes and signs the DMG, writes the `appcast.xml` that installed copies check for updates (Sparkle), and publishes the GitHub release. Updates are signed with an ed25519 key: the public half is `SUPublicEDKey` in `project.yml`, the private half is the `SPARKLE_PRIVATE_KEY` repo secret. Without that key no update can reach installed copies, so keep a copy safe.
+
+To make a signed, notarized DMG locally in `build-release/` (needs a Developer ID Application certificate and `notarytool` credentials saved as `mac-utility`; it doesn't make an update):
 
 ```bash
 scripts/release.sh
