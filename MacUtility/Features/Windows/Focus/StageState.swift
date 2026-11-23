@@ -307,6 +307,57 @@ struct StageState: Codable, Equatable, Sendable {
         return min(max(ratio, 0.2), 0.8)
     }
 
+    // MARK: Terminal toggle
+
+    /// A window the toggled terminal covers while it's open in a full set.
+    /// It's held out of sight and takes its slot back when the terminal goes.
+    struct Covered: Codable, Equatable, Sendable {
+        let id: WindowID
+        let set: Int
+    }
+
+    /// Leader ↩ opening the terminal: `id` (held out of every set, or in
+    /// another one) joins the current set, focused. A full set gives it the
+    /// unfocused pane; the window there is returned, to come back later.
+    @discardableResult
+    mutating func bringIn(_ id: WindowID) -> Covered? {
+        if let from = setNumber(of: id) {
+            guard from != current else {
+                currentSet.focused = id
+                return nil
+            }
+            self[set: from].remove(id)
+        }
+        if currentSet.hasRoom {
+            currentSet.insert(id)
+            currentSet.focused = id
+            // A lone window may still say stacked from an earlier pair.
+            currentSet.layout = .split
+            return nil
+        }
+        guard let out = currentSet.unfocused ?? currentSet.windows.last,
+              let index = currentSet.windows.firstIndex(of: out) else { return nil }
+        currentSet.windows[index] = id
+        currentSet.focused = id
+        return Covered(id: out, set: current)
+    }
+
+    /// The terminal leaves its set. A window it covered there takes its slot
+    /// back, and focus goes to the window that had it before the terminal
+    /// came. Returns the set it left.
+    @discardableResult
+    mutating func takeOut(_ id: WindowID, uncovering covered: Covered?) -> Int? {
+        guard let number = setNumber(of: id) else { return nil }
+        if let covered, covered.set == number, !contains(covered.id),
+           let index = self[set: number].windows.firstIndex(of: id) {
+            self[set: number].windows[index] = covered.id
+            self[set: number].focused = self[set: number].windows.first { $0 != covered.id } ?? covered.id
+        } else {
+            self[set: number].remove(id)
+        }
+        return number
+    }
+
     // MARK: Moving between sets
 
     /// Send a window to set `number`. Joins it when there's room, otherwise

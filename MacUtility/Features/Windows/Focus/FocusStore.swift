@@ -13,6 +13,10 @@ struct FocusSnapshot: Codable {
     var memory: [String: Int] = [:]
     /// bundleID → set: new windows of a pinned app go there.
     var pins: [String: Int] = [:]
+    /// The terminal leader ↩ shows and hides; hidden when in no set.
+    var terminal: WindowID?
+    /// The window the terminal covers in a full set, held out of sight.
+    var covered: StageState.Covered?
     /// True while Focus runs. Still true at launch means it didn't stop cleanly.
     var active = false
 }

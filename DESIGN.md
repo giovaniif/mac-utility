@@ -127,13 +127,23 @@ The screen shows one small group of windows at a time. Everything else is parked
 | `o` | Only (vim `Ctrl-w o`): keep the focused window, move the other to a new set |
 | `h` `j` `k` `l` / arrows | Focus the pane in that direction |
 | `⇧h` `⇧j` `⇧k` `⇧l` / `⇧`arrows | Swap the two windows |
-| `↩` | Split ⇄ stacked |
+| `m` | Split ⇄ stacked |
+| `↩` | Show or hide the terminal (see below) |
+| `⇧↩` | New terminal window, by the new-window rule |
 | `Space` | Switcher |
 | `R` | Replace focused window |
 | `F` | Zoom focused window to the full stage, no width cap; again to restore |
 | `\` | Float / unfloat |
 | `⌃B` | Send `⌃B` to the app |
 | `Esc` | Cancel |
+
+**Terminal toggle (`↩`)**, like an i3 scratchpad or a drop-down terminal:
+- One terminal window is "the terminal". Hidden means it's in no set and parked like any other window, so its session lives on. Showing it puts the same window in the current set, focused, beside the window there; from another set, it moves here.
+- A full set: it covers the unfocused pane. That window is held out of sight and takes its slot back when the terminal hides, moves to another set or closes.
+- The first `↩` picks the terminal: a terminal window already in the set (it hides), otherwise a new window of the chosen terminal app (it shows).
+- ⌘Tab or a Dock click onto the hidden terminal shows it; onto the covered window, the terminal makes way. Checked again after 150 ms, because an app activating can report its last window for a moment.
+- Which app: Settings → Focus → Terminal, Automatic by default (the first of Ghostty, iTerm2, WezTerm, kitty, Alacritty, Warp, Hyper, Tabby, Rio and Terminal that's running, else installed). A new window comes from pressing the app's ⌘N menu item through Accessibility (Terminal keeps it in a submenu), or typing ⌘N when the menu has none; an app that isn't running is launched instead.
+- Turning Focus off or quitting brings the hidden terminal back like any parked window; after that it's an ordinary window again.
 
 `⌃⌘←`/`⌃⌘→` (move window to the other display) stay direct hotkeys, unchanged. A three-finger swipe up opens the switcher and a swipe down closes it (three or four fingers, or off, in Settings). macOS has no public API for trackpad gestures, so this reads raw touches through the private MultitouchSupport framework, loaded at runtime like MiddleClick and BetterTouchTool do; if it's missing, the swipe does nothing. macOS's own Mission Control swipe has to be off, or both open. `⌃↑` opens the switcher directly while Focus runs, standing in for Mission Control: parked windows sit in a corner, so Mission Control shows them small and scattered. macOS keeps `⌃↑` for Mission Control until it's switched off in Keyboard Shortcuts, and "Group windows by application" makes Mission Control itself readable again.
 

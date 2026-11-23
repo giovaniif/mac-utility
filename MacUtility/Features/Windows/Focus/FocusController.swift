@@ -76,6 +76,13 @@ final class FocusController {
     /// the picker is up, or an app is opening the window that goes there.
     @ObservationIgnored private var openSplit: SplitAxis?
     @ObservationIgnored private var pendingSplit: (bundleID: String, until: Date)?
+    /// The terminal leader ↩ shows and hides. Out of every set means hidden:
+    /// parked out of sight, still open.
+    @ObservationIgnored private var terminal: WindowID?
+    /// The window the terminal covers while it's open in a full set.
+    @ObservationIgnored private var covered: StageState.Covered?
+    /// A terminal window asked for with leader ↩ (`toggled`) or ⇧↩.
+    @ObservationIgnored private var pendingTerminal: (bundleID: String, until: Date, toggled: Bool)?
     @ObservationIgnored private var settleTask: Task<Void, Never>?
     @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     @ObservationIgnored private var saveTask: Task<Void, Never>?
@@ -179,6 +186,8 @@ final class FocusController {
         parked = snapshot.parked
         memory = snapshot.memory
         pins = snapshot.pins
+        terminal = snapshot.terminal
+        covered = snapshot.covered
 
         adopting = true
         registry.onEvent = { [weak self] event in self?.handle(event) }
@@ -268,12 +277,18 @@ final class FocusController {
         trackpadFingers = 0
         statusItem.hide()
         let fallback = layout.single
-        for id in state.allWindows where parked.contains(id) {
+        for id in state.allWindows + heldWindows where parked.contains(id) {
             guard let window = registry.windows[id], let size = window.frame?.size else { continue }
             let home = homes[id] ?? CGRect(x: fallback.midX - size.width / 2, y: fallback.minY, width: size.width, height: size.height)
             window.element.setFrame(home)
         }
         parked.removeAll()
+        // Off, nothing is hidden: the covered window gets its slot back and
+        // the terminal is just another window next time.
+        if let id = terminal, covered != nil { state.takeOut(id, uncovering: covered) }
+        terminal = nil
+        covered = nil
+        pendingTerminal = nil
         registry.stop()
         isRunning = false
         zoomed = nil
@@ -328,8 +343,14 @@ final class FocusController {
         var keep = Set(windows.map(\.id))
         if recovering { keep.formUnion(WindowRegistry.existingWindowIDs().intersection(state.allWindows)) }
         state.prune(keeping: keep)
-        parked.formIntersection(state.allWindows)
-        let fresh = windows.filter { !state.contains($0.id) }
+        // A hidden terminal or the window it covers is gone if the window
+        // server doesn't have it any more.
+        let alive = Set(registry.windows.keys).union(recovering ? WindowRegistry.existingWindowIDs() : [])
+        if let id = terminal, !alive.contains(id) { terminal = nil }
+        if let id = covered?.id, !alive.contains(id) { covered = nil }
+        let held = Set(heldWindows)
+        parked.formIntersection(Set(state.allWindows).union(held))
+        let fresh = windows.filter { !state.contains($0.id) && !held.contains($0.id) }
         if state.allWindows.isEmpty {
             overflow.formUnion(state.adopt(fresh.map { ($0.id, $0.bundleID ?? $0.appName) }))
         } else {
@@ -404,6 +425,7 @@ final class FocusController {
         guard isRunning, !locked else { return }
         log.debug("trace apply focus \(focus) current \(self.state.current)")
         reconcileTabs()
+        reconcileTerminal()
         let set = state.currentSet
         appliedWidthCap = Self.widthCap
         appliedGap = Self.gap
@@ -421,6 +443,7 @@ final class FocusController {
         }
         let upcoming = nextFrames()
         for id in state.allWindows where frames[id] == nil { park(id, size: upcoming[id]?.size) }
+        for id in heldWindows { park(id) }
         rememberSets()
         scheduleSave()
     }
@@ -504,6 +527,11 @@ final class FocusController {
         switch event {
         case let .appeared(id):
             if let pid = registry.windows[id]?.pid { lastPID[id] = pid }
+            // A terminal window we asked for is wanted on the stage, however
+            // small: skip the popup check.
+            if let pending = pendingTerminal, registry.windows[id]?.bundleID == pending.bundleID, Date() < pending.until {
+                seen.insert(id)
+            }
             // A tab over its group's window is no popup, however small, and
             // a background tab isn't shown: raising it would select it.
             if let window = registry.windows[id], !state.contains(id), !hasManagedTwin(window),
@@ -551,7 +579,7 @@ final class FocusController {
     }
 
     private func windowAppeared(_ id: WindowID) {
-        guard !state.contains(id), !overflow.contains(id), let window = registry.windows[id] else { return }
+        guard !state.contains(id), !overflow.contains(id), !heldWindows.contains(id), let window = registry.windows[id] else { return }
         let onScreen = WindowRegistry.onScreenWindowIDs()
         // A new tab is the same window to the user: it takes its group's slot.
         if adoptTab(window, onScreen: onScreen) { return }
@@ -566,6 +594,16 @@ final class FocusController {
         if hasManagedTwin(window), recheck(id) { return }
         guard isManageable(window), isOnDisplay(window) else { return }
 
+        if let pending = pendingTerminal, pending.bundleID == window.bundleID, Date() < pending.until {
+            pendingTerminal = nil
+            if pending.toggled, terminal == nil {
+                terminal = id
+                bringInTerminal(id)
+            } else {
+                add(id, preferred: nil, activate: true)
+            }
+            return
+        }
         if let pending = pendingSplit, pending.bundleID == window.bundleID, Date() < pending.until, let axis = openSplit {
             pendingSplit = nil
             openSplit = nil
@@ -642,6 +680,7 @@ final class FocusController {
     private func canTakeSlot(_ window: TrackedWindow, onScreen: Set<WindowID>) -> Bool {
         onScreen.contains(window.id) && !state.contains(window.id) && !floating.contains(window.id)
             && !overflow.contains(window.id) && away[window.id] == nil && !window.isMinimized
+            && !heldWindows.contains(window.id)
     }
 
     /// The managed tab sharing `window`'s tab group, if any: same app, same
@@ -685,6 +724,7 @@ final class FocusController {
         if parked.remove(old) != nil { parked.insert(new) }
         if let home = homes[old] { homes[new] = home }
         if zoomed == old { zoomed = new }
+        if terminal == old { terminal = new }
         backgrounded[new] = nil
         seen.insert(new)
         popups.remove(new)
@@ -778,6 +818,9 @@ final class FocusController {
         thumbnails[id] = nil
         if zoomed == id { zoomed = nil }
         if pendingReplace?.target == id { pendingReplace = nil }
+        // A tab handed off above already moved `terminal` to the next tab.
+        if terminal == id { terminal = nil }
+        if covered?.id == id { covered = nil }
         if handedOff {
             apply(focus: false)
         } else if let number = state.remove(id) {
@@ -796,6 +839,20 @@ final class FocusController {
 
     private func focusChanged(_ id: WindowID) {
         log.debug("trace focus \(id) muted \(Date() <= self.focusMutedUntil) set \(self.state.setNumber(of: id) ?? -1) current \(self.state.current)")
+        if heldWindows.contains(id) {
+            // ⌘Tab or a Dock click reached the hidden terminal, or the window
+            // it covers. Rather than take keys out of sight, it comes back.
+            // An app activating can name its last window for a moment before
+            // the one clicked, so only if it still has focus a moment later.
+            guard Date() > focusMutedUntil else { return }
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(150))
+                guard let self, self.isRunning, !self.locked, self.heldWindows.contains(id),
+                      self.registry.frontmostFocusedWindow() == id else { return }
+                self.showHeld(id)
+            }
+            return
+        }
         if !state.contains(id), let window = registry.windows[id] {
             if adoptTab(window) { return }
             // A background tab that had its own slot is showing again with
@@ -1011,6 +1068,126 @@ final class FocusController {
         guard isRunning else { return }
         state.swapOrder()
         apply()
+    }
+
+    // MARK: Terminal
+
+    /// Parked outside every set: the hidden terminal, and the window it covers.
+    private var heldWindows: [WindowID] {
+        var held: [WindowID] = []
+        if let terminal, !state.contains(terminal), away[terminal] == nil { held.append(terminal) }
+        if let id = covered?.id, !state.contains(id) { held.append(id) }
+        return held
+    }
+
+    /// Leader ↩, like an i3 scratchpad: the terminal leaves the stage without
+    /// closing, and comes back to whatever set you're on.
+    func toggleTerminal() {
+        guard isRunning else { return }
+        syncFocus()
+        if let id = terminal, registry.windows[id] == nil { terminal = nil }
+        if let id = terminal {
+            if state.currentSet.windows.contains(id), stageFrames()[id] != nil {
+                hideTerminal(id)
+            } else {
+                bringInTerminal(id)
+            }
+            return
+        }
+        // A terminal already on this set becomes the one the toggle hides.
+        let set = state.currentSet
+        if let id = ([set.focused].compactMap { $0 } + set.windows).first(where: { TerminalApp.isTerminal(registry.windows[$0]?.bundleID) }) {
+            terminal = id
+            hideTerminal(id)
+            return
+        }
+        openTerminal(toggled: true)
+    }
+
+    /// Leader ⇧↩: a new terminal window, placed by the new-window rule.
+    func newTerminalWindow() {
+        guard isRunning else { return }
+        openTerminal(toggled: false)
+    }
+
+    private func openTerminal(toggled: Bool) {
+        guard let bundleID = TerminalApp.preferred else {
+            HUD.show("No terminal app found")
+            return
+        }
+        pendingTerminal = (bundleID, Date().addingTimeInterval(10), toggled)
+        TerminalApp.openWindow(bundleID)
+    }
+
+    /// The terminal joins the current set, focused: hidden, minimized, or
+    /// from another set (which gets back the window it covered there).
+    private func bringInTerminal(_ id: WindowID) {
+        if let window = registry.windows[id] {
+            if let app = window.app, app.isHidden { app.unhide() }
+            if away.removeValue(forKey: id) != nil || window.isMinimized {
+                window.element.set(kAXMinimizedAttribute, bool: false)
+            }
+        }
+        if let from = state.setNumber(of: id), from != state.current {
+            state.takeOut(id, uncovering: covered)
+            if covered?.set == from { covered = nil }
+        }
+        if let newlyCovered = state.bringIn(id) {
+            releaseCovered()
+            covered = newlyCovered
+        }
+        zoomed = nil
+        apply()
+    }
+
+    /// A held window got focus: the hidden terminal shows here, or the
+    /// terminal makes way for the window it covers.
+    private func showHeld(_ id: WindowID) {
+        if id == terminal {
+            bringInTerminal(id)
+        } else if let cover = covered, cover.id == id {
+            if let terminal, state.setNumber(of: terminal) == cover.set {
+                state.takeOut(terminal, uncovering: cover)
+                covered = nil
+            } else {
+                releaseCovered()
+            }
+            state.focus(id)
+            zoomed = nil
+            apply(focus: false)
+        }
+    }
+
+    /// The terminal leaves its set and is parked, still open. A window it
+    /// covered there takes its slot back.
+    private func hideTerminal(_ id: WindowID) {
+        guard let number = state.takeOut(id, uncovering: covered) else { return }
+        if covered?.set == number { covered = nil }
+        if zoomed == id { zoomed = nil }
+        apply(focus: number == state.current)
+    }
+
+    /// Before placing anything: a covered window whose terminal left its set
+    /// some other way (closed, sent to another set, replaced) gets it back.
+    private func reconcileTerminal() {
+        guard let cover = covered else { return }
+        if let terminal, state.setNumber(of: terminal) == cover.set, !state.contains(cover.id) { return }
+        releaseCovered()
+    }
+
+    /// The covered window goes back to its set, or by the new-window rule
+    /// when that set is full.
+    private func releaseCovered() {
+        guard let cover = covered else { return }
+        covered = nil
+        guard !state.contains(cover.id), let window = registry.windows[cover.id] else { return }
+        if state[set: cover.set].hasRoom {
+            state[set: cover.set].insert(cover.id)
+        } else if state.add(cover.id, activate: false) == .unmanaged {
+            overflow.insert(cover.id)
+            parked.remove(cover.id)
+            window.element.setFrame(homes[cover.id] ?? layout.single)
+        }
     }
 
     func toggleLayout() {
@@ -1303,10 +1480,12 @@ final class FocusController {
         if memory.count > 500 { memory = memory.filter { !$0.key.contains("\t") } }
         FocusStore.save(FocusSnapshot(
             state: state,
-            homes: homes.filter { state.contains($0.key) },
+            homes: homes.filter { state.contains($0.key) || heldWindows.contains($0.key) },
             parked: parked,
             memory: memory,
             pins: pins,
+            terminal: terminal,
+            covered: covered,
             active: active
         ))
     }

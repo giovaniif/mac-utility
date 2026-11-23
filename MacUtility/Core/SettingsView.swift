@@ -124,6 +124,7 @@ private struct FocusSettings: View {
     @AppStorage("focus.gap") private var gap = 12.0
     @AppStorage("focus.trackpadFingers") private var trackpadFingers = 3
     @AppStorage("focus.animation") private var animation = SwitchAnimation.fade.rawValue
+    @AppStorage(TerminalApp.defaultsKey) private var terminal = ""
 
     var body: some View {
         Section("Focus") {
@@ -131,6 +132,15 @@ private struct FocusSettings: View {
             VStack(alignment: .leading) {
                 KeyboardShortcuts.Recorder("Switcher", name: .focusSwitcher)
                 Text("Stands in for Mission Control, which can't show parked windows well. For ⌃↑ to reach Focus, turn off Mission Control's ⌃↑ in System Settings → Keyboard → Keyboard Shortcuts → Mission Control.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading) {
+                Picker("Terminal", selection: $terminal) {
+                    Text("Automatic").tag("")
+                    ForEach(TerminalApp.installed) { Text($0.name).tag($0.bundleID) }
+                }
+                Text("\(KeyboardShortcuts.Name.focusLeaderLabel) ↩ shows and hides a terminal window on any set without closing it. \(KeyboardShortcuts.Name.focusLeaderLabel) ⇧↩ opens a new one. Automatic uses the first terminal that's running, or else the first installed, Ghostty first.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

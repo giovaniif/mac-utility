@@ -3,6 +3,60 @@ import Foundation
 import Testing
 
 struct StageStateTests {
+    // MARK: Terminal toggle
+
+    @Test func terminalJoinsALoneWindowAsASplitAndLeavesItAlone() {
+        var state = StageState()
+        state.add(1)
+        state[set: 1].layout = .stacked
+        #expect(state.bringIn(7) == nil)
+        #expect(state[set: 1].windows == [1, 7])
+        #expect(state[set: 1].focused == 7)
+        #expect(state[set: 1].layout == .split)
+        #expect(state.takeOut(7, uncovering: nil) == 1)
+        #expect(state[set: 1].windows == [1])
+        #expect(state[set: 1].focused == 1)
+    }
+
+    @Test func terminalCoversTheUnfocusedPaneOfAFullSetAndGivesItBack() {
+        var state = StageState()
+        state.add(1)
+        state.add(2)
+        state[set: 1].focused = 1
+        let covered = state.bringIn(7)
+        #expect(covered == StageState.Covered(id: 2, set: 1))
+        #expect(state[set: 1].windows == [1, 7])
+        #expect(state[set: 1].focused == 7)
+        #expect(!state.contains(2))
+        #expect(state.takeOut(7, uncovering: covered) == 1)
+        #expect(state[set: 1].windows == [1, 2])
+        #expect(state[set: 1].focused == 1)
+    }
+
+    @Test func terminalFollowsYouToAnotherSet() {
+        var state = StageState()
+        state.add(1)
+        state.add(2)
+        state[set: 1].focused = 1
+        let covered = state.bringIn(7)
+        // On set 3 the terminal leaves set 1, which gets its window back.
+        state.goTo(3)
+        state.takeOut(7, uncovering: covered)
+        #expect(state.bringIn(7) == nil)
+        #expect(state[set: 1].windows == [1, 2])
+        #expect(state[set: 3].windows == [7])
+        #expect(state[set: 3].focused == 7)
+    }
+
+    @Test func terminalAlreadyInTheSetJustTakesFocus() {
+        var state = StageState()
+        state.add(7)
+        state.add(1)
+        #expect(state.bringIn(7) == nil)
+        #expect(state[set: 1].windows == [7, 1])
+        #expect(state[set: 1].focused == 7)
+    }
+
     @Test func newWindowJoinsCurrentSetWhileThereIsRoom() {
         var state = StageState()
         let result1 = state.add(1)

@@ -4,6 +4,11 @@ Each `## <version>` section is that release's notes: CI copies it into the
 GitHub release and into the update window. Add the next version's section
 before tagging `v<version>`.
 
+## 0.1.16
+
+- Focus: `⌃B` `↩` shows and hides a terminal on any set. Hiding doesn't close it: the same window, with its session, comes back next time, beside the window on the set you're on. On a full set it covers the other window until it hides again. `⌃B` `⇧↩` opens a new terminal window. Works with Ghostty, iTerm2, WezTerm, kitty, Alacritty, Warp, Hyper, Tabby, Rio and Terminal; pick one in Settings → Focus.
+- Focus: split ⇄ stacked moved from `⌃B` `↩` to `⌃B` `m`.
+
 ## 0.1.15
 
 - Over-the-air updates: Mac Utility checks for a new version every 6 hours and offers to install it, then relaunches. No more downloading the DMG. "Check for Updates…" in the menu checks now. This is the last version you install by hand.
