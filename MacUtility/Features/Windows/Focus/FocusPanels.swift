@@ -197,7 +197,7 @@ final class LeaderKey: NSObject, NSWindowDelegate {
         case KeyCode.up: pane(.up, shift: shift)
         case KeyCode.down: pane(.down, shift: shift)
         case KeyCode.returnKey, KeyCode.enter:
-            finish { $0.toggleLayout() }
+            finish { shift ? $0.newTerminalWindow() : $0.toggleTerminal() }
         case KeyCode.space:
             finish { $0.showSwitcher() }
         default:
@@ -209,6 +209,7 @@ final class LeaderKey: NSObject, NSWindowDelegate {
             case "v": finish { $0.split(.vertical) }
             case "s": finish { $0.split(.horizontal) }
             case "o": finish { $0.only() }
+            case "m": finish { $0.toggleLayout() }
             case "t": finish { $0.toggleAxis() }
             case "r": finish { $0.showReplace() }
             case "f": finish { $0.toggleZoom() }
@@ -276,7 +277,8 @@ private struct KeyGuideView: View {
         ("1–9", "Go to set"), ("Shift 1–9", "Move window to set"), ("⇥", "Previous set"),
         ("v", "Split side by side"), ("s", "Split top / bottom"), ("t", "Flip split direction"),
         ("o", "Only this window"),
-        ("h j k l", "Focus pane"), ("Shift h j k l", "Swap panes"), ("↩", "Split ⇄ stacked"),
+        ("h j k l", "Focus pane"), ("Shift h j k l", "Swap panes"), ("m", "Split ⇄ stacked"),
+        ("↩", "Show / hide terminal"), ("Shift ↩", "New terminal window"),
         ("Space", "Switcher"), ("r", "Replace this window"), ("f", "Zoom to full stage"),
         ("\\", "Float / unfloat"), (leader, "Send \(leader) to app"), ("esc", "Cancel"),
     ] }
