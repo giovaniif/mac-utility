@@ -14,6 +14,8 @@ enum RecordingOptions {
     static let cameraSizeKey = "recording.cameraSize"
     static let cameraPositionKey = "recording.cameraPosition"
     static let lastAreaKey = "recording.lastArea"
+    /// Smallest and largest camera bubble, in points across.
+    static let cameraSizes: ClosedRange<CGFloat> = 110...420
 
     static var camera: Bool {
         get { UserDefaults.standard.bool(forKey: cameraKey) }
@@ -46,7 +48,7 @@ enum RecordingOptions {
         get {
             let size = UserDefaults.standard.double(forKey: cameraSizeKey)
             guard size > 0 else { return 200 }
-            return min(max(size, CameraBubble.sizes.lowerBound), CameraBubble.sizes.upperBound)
+            return min(max(size, cameraSizes.lowerBound), cameraSizes.upperBound)
         }
         set { UserDefaults.standard.set(Double(newValue), forKey: cameraSizeKey) }
     }

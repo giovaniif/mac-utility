@@ -176,6 +176,12 @@ final class CameraFeedView: NSView {
         connection.isVideoMirrored = true
     }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutFeed()
+        mirror()
+    }
+
     override func layout() {
         super.layout()
         layoutFeed()
@@ -405,7 +411,6 @@ private final class BubbleContainer: NSView {
 final class CameraBubble {
     /// Room around the bubble for its shadow and glow.
     private static let margin: CGFloat = 32
-    static let sizes: ClosedRange<CGFloat> = 110...420
 
     private let model: CameraBubbleModel
     private let panel: NSPanel
@@ -485,7 +490,7 @@ final class CameraBubble {
     }
 
     func setSize(_ base: CGFloat) {
-        let base = min(max(base, Self.sizes.lowerBound), Self.sizes.upperBound)
+        let base = min(max(base, RecordingOptions.cameraSizes.lowerBound), RecordingOptions.cameraSizes.upperBound)
         guard base != model.base else { return }
         let center = self.center
         model.base = base

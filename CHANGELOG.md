@@ -4,6 +4,13 @@ Each `## <version>` section is that release's notes: CI copies it into the
 GitHub release and into the update window. Add the next version's section
 before tagging `v<version>`.
 
+## 0.1.17
+
+- Recording: pick the camera and microphone from the arrows beside their switches on the bar. The microphone switch fills with your input level, so you can tell the right one is on before you start.
+- Recording: ten camera styles. Circle, Rounded, Widescreen, Portrait, Aura (a turning story ring), Neon, Polaroid, Pop Art, Hexagon and Lava Lamp (a slowly morphing blob). Pick one and a size from the camera menu, double-click the bubble for the next style, and scroll or pinch on it to resize. The bubble comes back where you left it.
+- Recording: the last area you recorded comes back with handles. Drag it or its edges to adjust, then click inside it or press Return. Drag anywhere else for a new area, or click outside it for the full screen.
+- Focus: QuickTime Player floats like Finder and System Settings instead of being tiled.
+
 ## 0.1.16
 
 - Focus: `⌃B` `↩` shows and hides a terminal on any set. Hiding doesn't close it: the same window, with its session, comes back next time, beside the window on the set you're on. On a full set it covers the other window until it hides again. `⌃B` `⇧↩` opens a new terminal window. Works with Ghostty, iTerm2, WezTerm, kitty, Alacritty, Warp, Hyper, Tabby, Rio and Terminal; pick one in Settings → Focus.
