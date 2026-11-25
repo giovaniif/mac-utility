@@ -8,6 +8,12 @@ enum RecordingOptions {
     static let cameraKey = "recording.camera"
     static let microphoneKey = "recording.microphone"
     static let keystrokesKey = "recording.keystrokes"
+    static let cameraIDKey = "recording.cameraDevice"
+    static let microphoneIDKey = "recording.microphoneDevice"
+    static let cameraStyleKey = "recording.cameraStyle"
+    static let cameraSizeKey = "recording.cameraSize"
+    static let cameraPositionKey = "recording.cameraPosition"
+    static let lastAreaKey = "recording.lastArea"
 
     static var camera: Bool {
         get { UserDefaults.standard.bool(forKey: cameraKey) }
@@ -21,68 +27,42 @@ enum RecordingOptions {
         get { UserDefaults.standard.bool(forKey: keystrokesKey) }
         set { UserDefaults.standard.set(newValue, forKey: keystrokesKey) }
     }
-}
-
-/// Round, draggable camera bubble. It's a normal on-screen window, so the
-/// recording picks it up like anything else.
-@MainActor
-final class CameraBubble {
-    private let session = AVCaptureSession()
-    private let panel: NSPanel
-    private static let size: CGFloat = 200
-
-    init?() {
-        guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input)
-        else { return nil }
-        session.addInput(input)
-
-        panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: Self.size, height: Self.size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.level = .floating
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.isMovableByWindowBackground = true
-        panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
-        view.wantsLayer = true
-        let preview = AVCaptureVideoPreviewLayer(session: session)
-        preview.videoGravity = .resizeAspectFill
-        preview.frame = view.bounds
-        preview.cornerRadius = Self.size / 2
-        preview.masksToBounds = true
-        preview.borderWidth = 3
-        preview.borderColor = NSColor.white.withAlphaComponent(0.85).cgColor
-        // Mirror like a selfie camera.
-        preview.connection?.automaticallyAdjustsVideoMirroring = false
-        preview.connection?.isVideoMirrored = true
-        view.layer?.addSublayer(preview)
-        panel.contentView = view
+    /// Unique ID of the chosen camera; nil follows the system's.
+    static var cameraID: String? {
+        get { UserDefaults.standard.string(forKey: cameraIDKey) }
+        set { UserDefaults.standard.set(newValue, forKey: cameraIDKey) }
     }
-
-    func show(in rect: CGRect) {
-        let inset: CGFloat = 24
-        let origin = CGPoint(x: rect.maxX - Self.size - inset, y: rect.minY + inset)
-        panel.setFrameOrigin(origin)
-        panel.fadeIn(duration: 0.2)
-        // startRunning/stopRunning block, so keep them off the main thread.
-        nonisolated(unsafe) let session = session
-        Task.detached { session.startRunning() }
+    /// Unique ID of the chosen microphone; nil follows the system's input.
+    static var microphoneID: String? {
+        get { UserDefaults.standard.string(forKey: microphoneIDKey) }
+        set { UserDefaults.standard.set(newValue, forKey: microphoneIDKey) }
     }
-
-    func hide() {
-        panel.orderOut(nil)
-        // startRunning/stopRunning block, so keep them off the main thread.
-        nonisolated(unsafe) let session = session
-        Task.detached { session.stopRunning() }
+    static var cameraStyle: CameraStyle {
+        get { CameraStyle(rawValue: UserDefaults.standard.string(forKey: cameraStyleKey) ?? "") ?? .circle }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: cameraStyleKey) }
+    }
+    /// How many points across the bubble is.
+    static var cameraSize: CGFloat {
+        get {
+            let size = UserDefaults.standard.double(forKey: cameraSizeKey)
+            guard size > 0 else { return 200 }
+            return min(max(size, CameraBubble.sizes.lowerBound), CameraBubble.sizes.upperBound)
+        }
+        set { UserDefaults.standard.set(Double(newValue), forKey: cameraSizeKey) }
+    }
+    /// Where the bubble's middle was left, as a fraction of the recorded area.
+    static var cameraPosition: CGPoint? {
+        get {
+            guard let values = UserDefaults.standard.array(forKey: cameraPositionKey) as? [Double], values.count == 2 else { return nil }
+            return CGPoint(x: values[0], y: values[1])
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set([Double(newValue.x), Double(newValue.y)], forKey: cameraPositionKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: cameraPositionKey)
+            }
+        }
     }
 }
 
@@ -266,20 +246,52 @@ final class RecordingControlModel {
     var camera = RecordingOptions.camera
     var microphone = RecordingOptions.microphone
     var keystrokes = RecordingOptions.keystrokes
+
+    var cameras: [DeviceChoice] = []
+    var microphones: [DeviceChoice] = []
+    /// Chosen device IDs; empty follows the system default.
+    var cameraID = RecordingOptions.cameraID ?? ""
+    var microphoneID = RecordingOptions.microphoneID ?? ""
+    var cameraStyle = RecordingOptions.cameraStyle
+    var cameraSize = RecordingOptions.cameraSize
+    /// Microphone input level, 0...1, while the microphone is on.
+    var micLevel: Float = 0
+
+    /// The chosen camera, or "" (Automatic) when it's unplugged.
+    var cameraSelection: String { cameras.contains { $0.id == cameraID } ? cameraID : "" }
+    var microphoneSelection: String { microphones.contains { $0.id == microphoneID } ? microphoneID : "" }
+
+    func reloadDevices() {
+        cameras = CaptureDevices.cameras.map(DeviceChoice.init)
+        microphones = CaptureDevices.microphones.map(DeviceChoice.init)
+    }
 }
 
 /// CleanShot-style floating bar. Before recording it holds the camera,
 /// microphone and keystroke switches plus Record; while recording it shows
-/// the elapsed time and Stop. It's excluded from the recording.
+/// the elapsed time and Stop. The arrows beside camera and microphone pick
+/// the device, and the camera's look. It's excluded from the recording.
 @MainActor
 final class RecordingControl {
-    enum Action { case record, stop, cancel, pause, resume, camera(Bool), microphone(Bool), keystrokes(Bool) }
+    enum Action {
+        case record, stop, cancel, pause, resume
+        case camera(Bool), microphone(Bool), keystrokes(Bool)
+        case cameraDevice(String), microphoneDevice(String)
+        case cameraStyle(CameraStyle), cameraSize(CGFloat)
+    }
 
     let model = RecordingControlModel()
     private let panel: NSPanel
-    private static let size = CGSize(width: 340, height: 48)
+    private static let size = CGSize(width: 396, height: 48)
+    private var tokens: [NSObjectProtocol] = []
+    private var levelTask: Task<Void, Never>?
 
     var windowID: CGWindowID { CGWindowID(panel.windowNumber) }
+
+    /// Read a few times a second for the microphone meter; nil stops it.
+    var levelSource: (@MainActor () -> Float)? {
+        didSet { watchLevel() }
+    }
 
     init(onAction: @escaping @MainActor (Action) -> Void) {
         panel = NSPanel(
@@ -296,6 +308,14 @@ final class RecordingControl {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSView.hosting(RecordingControlView(model: model, onAction: onAction))
+
+        model.reloadDevices()
+        let center = NotificationCenter.default
+        for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+            tokens.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { [weak self] in self?.model.reloadDevices() }
+            })
+        }
     }
 
     func show(on screen: NSScreen) {
@@ -321,7 +341,25 @@ final class RecordingControl {
         model.paused = paused
     }
 
-    func hide() { panel.orderOut(nil) }
+    func hide() {
+        panel.orderOut(nil)
+        levelSource = nil
+        tokens.forEach(NotificationCenter.default.removeObserver)
+        tokens.removeAll()
+    }
+
+    private func watchLevel() {
+        levelTask?.cancel()
+        model.micLevel = 0
+        guard levelSource != nil else { return }
+        levelTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(80))
+                guard let self, let source = levelSource else { return }
+                model.micLevel = source()
+            }
+        }
+    }
 }
 
 private struct RecordingControlView: View {
@@ -329,16 +367,21 @@ private struct RecordingControlView: View {
     let onAction: @MainActor (RecordingControl.Action) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             OptionButton(on: model.camera, onIcon: "video.fill", offIcon: "video.slash", help: "Camera") {
                 model.camera.toggle()
                 onAction(.camera(model.camera))
             }
-            OptionButton(on: model.microphone, onIcon: "mic.fill", offIcon: "mic.slash", help: model.recording ? "Microphone can only change before recording" : "Microphone") {
+            DeviceMenu(help: "Choose camera and style") { cameraMenu }
+
+            OptionButton(on: model.microphone, onIcon: "mic.fill", offIcon: "mic.slash", help: model.recording ? "Microphone can only change before recording" : "Microphone", level: model.microphone ? model.micLevel : nil) {
                 model.microphone.toggle()
                 onAction(.microphone(model.microphone))
             }
             .disabled(model.recording)
+            DeviceMenu(help: model.recording ? "Microphone can only change before recording" : "Choose microphone") { microphoneMenu }
+                .disabled(model.recording)
+
             OptionButton(on: model.keystrokes, onIcon: "keyboard.fill", offIcon: "keyboard", help: "Show keystrokes") {
                 model.keystrokes.toggle()
                 onAction(.keystrokes(model.keystrokes))
@@ -389,9 +432,88 @@ private struct RecordingControlView: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(width: 340, height: 48)
+        .frame(width: 396, height: 48)
         .background(.regularMaterial, in: Capsule())
         .animation(.spring(duration: 0.3), value: model.recording)
+    }
+
+    @ViewBuilder
+    private var cameraMenu: some View {
+        Section("Camera") {
+            Picker("Camera", selection: Binding(
+                get: { model.cameraSelection },
+                set: { onAction(.cameraDevice($0)) }
+            )) {
+                Text("Automatic").tag("")
+                ForEach(model.cameras) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        Section("Style") {
+            Picker("Style", selection: Binding(
+                get: { model.cameraStyle },
+                set: { onAction(.cameraStyle($0)) }
+            )) {
+                ForEach(CameraStyle.allCases) { style in
+                    Label(style.title, systemImage: style.symbol).tag(style)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+        Section("Size") {
+            ForEach(Self.sizes, id: \.size) { preset in
+                Toggle(preset.title, isOn: Binding(
+                    get: { abs(model.cameraSize - preset.size) < 1 },
+                    set: { _ in onAction(.cameraSize(preset.size)) }
+                ))
+            }
+        }
+        Section {
+            Text("Drag the bubble to move it, double-click it for the next style, scroll or pinch on it to resize.")
+        }
+    }
+
+    @ViewBuilder
+    private var microphoneMenu: some View {
+        Section("Microphone") {
+            Picker("Microphone", selection: Binding(
+                get: { model.microphoneSelection },
+                set: { onAction(.microphoneDevice($0)) }
+            )) {
+                Text("System Default").tag("")
+                ForEach(model.microphones) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        }
+    }
+
+    private static let sizes: [(title: String, size: CGFloat)] = [("Small", 150), ("Medium", 200), ("Large", 280)]
+}
+
+/// The small arrow beside an option that opens its menu.
+private struct DeviceMenu<Content: View>: View {
+    let help: String
+    @ViewBuilder let content: () -> Content
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            content()
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 16, height: 30)
+        .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Color.primary.opacity(0.08) : .clear))
+        .help(help)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -400,6 +522,8 @@ private struct OptionButton: View {
     let onIcon: String
     let offIcon: String
     let help: String
+    /// Input level shown filling the button from the bottom, if any.
+    var level: Float?
     let action: () -> Void
     @State private var hovering = false
 
@@ -409,10 +533,19 @@ private struct OptionButton: View {
                 .font(.system(size: 14, weight: .medium))
                 .frame(width: 32, height: 30)
                 .foregroundStyle(on ? Color.accentColor : .secondary)
+                .background(alignment: .bottom) {
+                    if let level {
+                        Rectangle()
+                            .fill(Color.accentColor.opacity(0.35))
+                            .frame(height: 30 * CGFloat(level))
+                            .animation(.linear(duration: 0.08), value: level)
+                    }
+                }
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(on ? Color.accentColor.opacity(0.18) : hovering ? Color.primary.opacity(0.08) : .clear)
                 )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)

@@ -100,6 +100,7 @@ final class FocusController {
         "com.apple.archiveutility",
         "com.apple.ScreenSharing",
         "com.apple.PhotoBooth",
+        "com.apple.QuickTimePlayerX",
     ]
 
     static var widthCap: Double {
@@ -400,7 +401,7 @@ final class FocusController {
         return popups.contains(window.id)
     }
 
-    /// Finder, System Settings, app settings windows, sign-in and web popups
+    /// Finder, System Settings, QuickTime Player, app settings windows, sign-in and web popups
     /// (a Meet popover, an OAuth window) float above the stage instead.
     private func classifyPopup(_ window: TrackedWindow) -> Bool {
         if let bundleID = window.bundleID, Self.floatingApps.contains(bundleID) { return true }

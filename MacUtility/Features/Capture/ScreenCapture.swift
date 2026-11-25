@@ -20,6 +20,9 @@ final class ScreenCapture {
     @ObservationIgnored private var recording: ScreenRecording?
     @ObservationIgnored private var camera: CameraBubble?
     @ObservationIgnored private var keystrokes: KeystrokeOverlay?
+    @ObservationIgnored private var micMonitor: MicLevelMonitor?
+    /// The bar is up and Record hasn't been pressed yet.
+    @ObservationIgnored private var waitingForRecord = false
     @ObservationIgnored private var control: RecordingControl?
     @ObservationIgnored private var recordArea = CGRect.zero
     /// Waiting for Record or Cancel on the bar.
@@ -130,17 +133,25 @@ final class ScreenCapture {
         self.control = control
         if control.model.camera { await setCamera(true) }
         if control.model.keystrokes { setKeystrokes(true) }
+        waitingForRecord = true
+        if control.model.microphone { Task { await setMicMonitor(true) } }
 
         let go = await withCheckedContinuation { pendingStart = $0 }
+        waitingForRecord = false
+        setMicMonitorOff()
         guard go else {
             tearDownAccessories()
             return
         }
 
-        var micAllowed = false
+        var microphone: AVCaptureDevice?
         if control.model.microphone {
-            micAllowed = await AVCaptureDevice.requestAccess(for: .audio)
-            if !micAllowed { HUD.show("Microphone access is off in System Settings") }
+            if await AVCaptureDevice.requestAccess(for: .audio) {
+                microphone = CaptureDevices.microphone()
+                if microphone == nil { HUD.show("No microphone found") }
+            } else {
+                HUD.show("Microphone access is off in System Settings")
+            }
         }
         // Let the bar's window reach the window server before the shareable
         // content snapshot, so it can be excluded.
@@ -149,11 +160,12 @@ final class ScreenCapture {
         do {
             let content = try await CaptureContent.make(for: target, excluding: [control.windowID, previews.windowID], windowAsRegion: true)
             let url = CaptureFiles.newURL(prefix: "Recording", ext: "mp4")
-            let recording = try ScreenRecording(content: content, microphone: micAllowed, url: url)
+            let recording = try ScreenRecording(content: content, microphone: microphone, url: url)
             try await recording.start()
             self.recording = recording
             isRecording = true
             control.markRecording()
+            if microphone != nil { control.levelSource = { recording.micLevel } }
             log.info("recording started")
         } catch {
             tearDownAccessories()
@@ -176,10 +188,42 @@ final class ScreenCapture {
             Task { await setCamera(on) }
         case let .microphone(on):
             RecordingOptions.microphone = on
+            Task { await setMicMonitor(on) }
         case let .keystrokes(on):
             RecordingOptions.keystrokes = on
             setKeystrokes(on)
+        case let .cameraDevice(id):
+            RecordingOptions.cameraID = id.isEmpty ? nil : id
+            control?.model.cameraID = id
+            turnCameraOn()
+            if let camera, let device = CaptureDevices.camera() { camera.setDevice(device) }
+        case let .microphoneDevice(id):
+            RecordingOptions.microphoneID = id.isEmpty ? nil : id
+            control?.model.microphoneID = id
+            RecordingOptions.microphone = true
+            control?.model.microphone = true
+            // Restart the meter on the new microphone.
+            setMicMonitorOff()
+            Task { await setMicMonitor(true) }
+        case let .cameraStyle(style):
+            RecordingOptions.cameraStyle = style
+            control?.model.cameraStyle = style
+            camera?.setStyle(style)
+            turnCameraOn()
+        case let .cameraSize(size):
+            RecordingOptions.cameraSize = size
+            control?.model.cameraSize = size
+            camera?.setSize(size)
+            turnCameraOn()
         }
+    }
+
+    /// Picking a camera, style or size in the menu also turns the camera on.
+    private func turnCameraOn() {
+        guard let control, !control.model.camera else { return }
+        control.model.camera = true
+        RecordingOptions.camera = true
+        Task { await setCamera(true) }
     }
 
     private func setCamera(_ on: Bool) async {
@@ -194,9 +238,44 @@ final class ScreenCapture {
             control?.model.camera = false
             return
         }
-        guard control != nil, let bubble = CameraBubble() else { return }
+        guard let control, camera == nil else { return }
+        guard let device = CaptureDevices.camera(), let bubble = CameraBubble(device: device) else {
+            HUD.show("No camera found")
+            control.model.camera = false
+            return
+        }
+        bubble.onStyleChange = { [weak control] style in
+            RecordingOptions.cameraStyle = style
+            control?.model.cameraStyle = style
+        }
+        bubble.onSizeChange = { [weak control] size in control?.model.cameraSize = size }
         bubble.show(in: recordArea)
         camera = bubble
+    }
+
+    /// Runs the microphone meter on the bar while it waits for Record.
+    private func setMicMonitor(_ on: Bool) async {
+        guard on else {
+            setMicMonitorOff()
+            return
+        }
+        guard micMonitor == nil, waitingForRecord else { return }
+        guard await AVCaptureDevice.requestAccess(for: .audio) else {
+            HUD.show("Microphone access is off in System Settings")
+            return
+        }
+        guard let control, waitingForRecord, micMonitor == nil, control.model.microphone,
+              let device = CaptureDevices.microphone(), let monitor = MicLevelMonitor(device: device)
+        else { return }
+        monitor.start()
+        micMonitor = monitor
+        control.levelSource = { monitor.level }
+    }
+
+    private func setMicMonitorOff() {
+        micMonitor?.stop()
+        micMonitor = nil
+        control?.levelSource = nil
     }
 
     private func setKeystrokes(_ on: Bool) {
@@ -246,6 +325,7 @@ final class ScreenCapture {
     }
 
     private func tearDownAccessories() {
+        setMicMonitorOff()
         control?.hide()
         camera?.hide()
         keystrokes?.stop()
