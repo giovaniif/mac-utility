@@ -100,6 +100,7 @@ final class FocusController {
         "com.apple.archiveutility",
         "com.apple.ScreenSharing",
         "com.apple.PhotoBooth",
+        "com.apple.QuickTimePlayerX",
     ]
 
     static var widthCap: Double {
@@ -305,6 +306,13 @@ final class FocusController {
         }
         TrackpadSwipe.shared.start(fingers: trackpadFingers) { [weak self] direction in
             guard let self, self.isRunning else { return }
+            // Off the stage, the same swipe is macOS moving between Spaces.
+            // Switching sets underneath would rearrange windows you can't
+            // see, and scramble them by the time you come back.
+            if !self.switcher.isVisible, self.isOffStage() {
+                self.log.info("swipe ignored: on a full-screen or other Space")
+                return
+            }
             switch direction {
             case .up where !self.switcher.isVisible: self.showSwitcher()
             case .down where self.switcher.isVisible: self.switcher.hide()
@@ -314,6 +322,24 @@ final class FocusController {
             default: break
             }
         }
+    }
+
+    /// The screen shows something other than the stage: a native
+    /// full-screen window (a video in Safari, say) is in front, or the
+    /// current set's windows aren't on this Space.
+    private func isOffStage() -> Bool {
+        if let app = NSWorkspace.shared.frontmostApplication,
+           let window = AXUIElementCreateApplication(app.processIdentifier).element(kAXFocusedWindowAttribute),
+           window.bool("AXFullScreen") == true {
+            return true
+        }
+        // Hidden or minimized windows are off screen on the stage too.
+        let shown = state.currentSet.windows.filter { id in
+            guard let window = registry.windows[id] else { return false }
+            return window.app?.isHidden != true && !window.isMinimized
+        }
+        guard !shown.isEmpty else { return false }
+        return WindowRegistry.onScreenWindowIDs().isDisjoint(with: shown)
     }
 
     /// Next or previous set that has windows, wrapping around.
@@ -400,7 +426,7 @@ final class FocusController {
         return popups.contains(window.id)
     }
 
-    /// Finder, System Settings, app settings windows, sign-in and web popups
+    /// Finder, System Settings, QuickTime Player, app settings windows, sign-in and web popups
     /// (a Meet popover, an OAuth window) float above the stage instead.
     private func classifyPopup(_ window: TrackedWindow) -> Bool {
         if let bundleID = window.bundleID, Self.floatingApps.contains(bundleID) { return true }

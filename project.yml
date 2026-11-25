@@ -48,8 +48,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.giovani.MacUtility
         SWIFT_VERSION: "6.0"
-        MARKETING_VERSION: "0.1.16"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "0.1.17"
+        CURRENT_PROJECT_VERSION: "18"
         ENABLE_HARDENED_RUNTIME: YES
         # Same identity as releases, so permission grants are shared between
         # the installed app and local builds.

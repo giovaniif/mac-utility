@@ -2,8 +2,8 @@ import AVFoundation
 import ScreenCaptureKit
 import os
 
-/// Records a ScreenCaptureKit stream to an H.264 .mp4, with optional
-/// microphone audio from AVCapture. Both sample callbacks and all writer calls
+/// Records a ScreenCaptureKit stream to an H.264 .mp4, with optional audio
+/// from a microphone through AVCapture. Both sample callbacks and all writer calls
 /// run on one serial queue, which is what makes the `@unchecked Sendable` safe.
 final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     let url: URL
@@ -15,6 +15,7 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
     private let audioInput: AVAssetWriterInput?
     private let stream: SCStream
     private let micSession: AVCaptureSession?
+    private let micOutput: AVCaptureAudioDataOutput?
     private var startTime: CMTime?
 
     // Pausing drops samples and shifts later ones back by the paused time,
@@ -24,7 +25,10 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
     private var resumedAt = CMTime.zero
     private var pausedTotal = CMTime.zero
 
-    init(content: CaptureContent, microphone: Bool, url: URL) throws {
+    /// Input level of the microphone, 0...1, for the meter on the bar.
+    var micLevel: Float { micOutput.map(MicLevelMonitor.level(of:)) ?? 0 }
+
+    init(content: CaptureContent, microphone: AVCaptureDevice?, url: URL) throws {
         self.url = url
         // H.264 needs even dimensions.
         let width = content.pixelWidth & ~1
@@ -52,7 +56,7 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
         videoInput.expectsMediaDataInRealTime = true
         writer.add(videoInput)
 
-        if microphone, let device = AVCaptureDevice.default(for: .audio) {
+        if let device = microphone {
             let session = AVCaptureSession()
             let input = try AVCaptureDeviceInput(device: device)
             let output = AVCaptureAudioDataOutput()
@@ -67,12 +71,14 @@ final class ScreenRecording: NSObject, SCStreamOutput, SCStreamDelegate, AVCaptu
             audio.expectsMediaDataInRealTime = true
             writer.add(audio)
             micSession = session
+            micOutput = output
             audioInput = audio
             stream = SCStream(filter: content.filter, configuration: config, delegate: nil)
             super.init()
             output.setSampleBufferDelegate(self, queue: queue)
         } else {
             micSession = nil
+            micOutput = nil
             audioInput = nil
             stream = SCStream(filter: content.filter, configuration: config, delegate: nil)
             super.init()
