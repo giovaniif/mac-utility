@@ -10,6 +10,7 @@ before tagging `v<version>`.
 - Recording: ten camera styles. Circle, Rounded, Widescreen, Portrait, Aura (a turning story ring), Neon, Polaroid, Pop Art, Hexagon and Lava Lamp (a slowly morphing blob). Pick one and a size from the camera menu, double-click the bubble for the next style, and scroll or pinch on it to resize. The bubble comes back where you left it.
 - Recording: the last area you recorded comes back with handles. Drag it or its edges to adjust, then click inside it or press Return. Drag anywhere else for a new area, or click outside it for the full screen.
 - Focus: QuickTime Player floats like Finder and System Settings instead of being tiled.
+- Focus: trackpad swipes no longer switch sets while you're on a full-screen Space (a video in full-screen Safari, say). There the swipe belongs to macOS, which moves between Spaces with it; switching sets underneath scrambled them.
 
 ## 0.1.16
 
