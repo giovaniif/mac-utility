@@ -94,6 +94,7 @@ final class FocusController {
 
     /// Never tiled: utility apps whose windows are fixed panels at heart.
     private static let floatingApps: Set<String> = [
+        "com.1password.1password",
         "com.apple.systempreferences",
         "com.apple.finder",
         "com.apple.calculator",
