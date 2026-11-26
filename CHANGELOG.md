@@ -4,6 +4,10 @@ Each `## <version>` section is that release's notes: CI copies it into the
 GitHub release and into the update window. Add the next version's section
 before tagging `v<version>`.
 
+## 0.1.18
+
+- 1Password windows now open above the Focus stage, like Finder windows.
+
 ## 0.1.17
 
 - Recording: pick the camera and microphone from the arrows beside their switches on the bar. The microphone switch fills with your input level, so you can tell the right one is on before you start.
